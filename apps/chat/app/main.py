@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 
 import httpx
+import websockets
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -49,6 +50,12 @@ def _parse_nodes(raw):
 
 NODES = _parse_nodes(os.environ.get("CLUSTER_NODES", ""))   # hostname -> node Ollama URL
 
+# The agents app (apps/agents) — chat can hand a message to one of its agents
+# instead of the plain model, and streams the agent's working events (tool
+# calls, results, final JSON) into the UI. Empty/unreachable => the agent
+# picker simply hides; plain chat is unaffected.
+AGENTS_URL = os.environ.get("AGENTS_URL", "http://localhost:8810").rstrip("/")
+
 STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="cluster-chat")
@@ -77,6 +84,19 @@ async def list_nodes():
     """Node names a chat can be pinned to (in addition to the default load-balanced LB).
     Empty when no per-node info is configured, so the UI hides the picker."""
     return {"nodes": sorted(NODES)}
+
+
+@app.get("/api/agents")
+async def list_agents():
+    """Agents available from the agents app; empty when it's down/absent so
+    the UI hides the agent picker."""
+    try:
+        async with httpx.AsyncClient(timeout=4) as client:
+            resp = await client.get(f"{AGENTS_URL}/api/agents")
+            resp.raise_for_status()
+            return {"agents": resp.json()}
+    except httpx.HTTPError:
+        return {"agents": []}
 
 
 async def _stream_chat(ws: WebSocket, model, messages, node=None):
@@ -111,6 +131,26 @@ async def _stream_chat(ws: WebSocket, model, messages, node=None):
         await ws.send_json({"type": "error", "message": f"cluster error: {exc}"})
 
 
+async def _stream_agent(ws: WebSocket, agent: str, input_text: str):
+    """Run one agent turn via the agents app, relaying its working events
+    (start/thinking/tool_call/tool_result/final/error) to the browser as
+    {"type": "agent", "event": {...}}. Cancelling this task closes the
+    upstream socket, which ends the run server-side."""
+    url = AGENTS_URL.replace("http://", "ws://").replace("https://", "wss://")
+    try:
+        async with websockets.connect(f"{url}/ws/agents/{agent}") as upstream:
+            await upstream.send(json.dumps({"input": input_text}))
+            async for raw in upstream:
+                event = json.loads(raw)
+                await ws.send_json({"type": "agent", "event": event})
+                if event.get("type") in ("final", "error"):
+                    break
+        await ws.send_json({"type": "done"})
+    except (OSError, websockets.WebSocketException) as exc:
+        await ws.send_json({"type": "error",
+                            "message": f"agents app unreachable: {exc}"})
+
+
 async def _cancel(task):
     """Cancel an in-flight generation task and wait for it to fully unwind."""
     if task and not task.done():
@@ -143,7 +183,18 @@ async def chat(ws: WebSocket):
 
             model = req.get("model")
             messages = req.get("messages", [])
+            agent = req.get("agent")  # optional: route to an agents-app agent
             node = req.get("node")  # optional: pin to one node, else load-balanced
+
+            if agent:
+                if not messages:
+                    await ws.send_json({"type": "error", "message": "messages are required"})
+                    continue
+                await _cancel(gen)
+                gen = asyncio.create_task(
+                    _stream_agent(ws, agent, messages[-1].get("content", "")))
+                continue
+
             if not model or not messages:
                 await ws.send_json({"type": "error", "message": "model and messages are required"})
                 continue

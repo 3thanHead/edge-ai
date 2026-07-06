@@ -1,0 +1,40 @@
+# The agents API + the MQTT broker the ESP32 talks to. Runs on the cluster
+# master (the same box as HAProxy and the chat app) so the device has one
+# stable address for both. Per-machine config lives in .env (auto-read).
+#
+#   docker compose up --build      # build + run (auto-restarts on boot)
+#   docker compose logs -f agents  # watch the agents
+#   docker compose down            # stop
+#
+# Then: curl http://<host>:8810/api/agents
+services:
+  agents:
+    build:
+      context: .
+    image: iot_ai-agents
+    ports:
+      - "${AGENTS_PORT:-8810}:8810"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # The cluster's single endpoint (HAProxy, native Ollama API); `edge`
+      # style: real master injected via .env, this default is a fallback.
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
+      # Must be a tool-calling-capable model served by every cluster node.
+      LLM_MODEL: ${LLM_MODEL:-llama3.2:3b}
+      # The ESP32's HTTP API (its LAN IP or mDNS name if resolvable).
+      IOT_DEVICE_URL: ${IOT_DEVICE_URL:-http://iot-assistant.local}
+      # The broker below; agents publish fire-and-forget commands through it.
+      MQTT_HOST: ${MQTT_HOST:-mosquitto}
+      MQTT_PORT: 1883
+    depends_on:
+      - mosquitto
+    restart: unless-stopped
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped

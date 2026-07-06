@@ -55,7 +55,7 @@ MASTER_FALLBACK = "localhost:11434"  # used if no fleet.json (run `edge fleet` t
 
 # Apps that talk to the LLM cluster: `edge up`/`deploy` inject the master endpoint
 # (and node list) from fleet.json so no cluster IPs need to live in committed files.
-CLUSTER_APPS = {"chat", "ecomm-pipeline", "niche-finder"}
+CLUSTER_APPS = {"chat", "ecomm-pipeline", "agents"}
 
 DRY_RUN = False  # set by `deploy --dry-run`
 
@@ -330,7 +330,26 @@ def cluster_env():
     nodes = _cluster_nodes_env(fleet)
     if nodes:
         env["CLUSTER_NODES"] = nodes
+    # The ESP32's address (used by the agents app) lives in the repo-root .env
+    # next to the firmware's WiFi creds -- same no-IPs-in-git policy as fleet.json.
+    device = _root_env().get("IOT_DEVICE_URL")
+    if device:
+        env["IOT_DEVICE_URL"] = device
     return env
+
+
+def _root_env():
+    """KEY=VALUE pairs from the repo-root .env (firmware WiFi creds, device
+    addresses). Gitignored, hand-managed, shared with the firmware build."""
+    out = {}
+    p = REPO_ROOT / ".env"
+    if p.exists():
+        for line in p.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                out[k.strip()] = v.strip()
+    return out
 
 
 def _cluster_nodes_env(fleet):
@@ -607,7 +626,11 @@ def _deploy_app(app, fleet, rpath):
     nodes_env = _cluster_nodes_env(fleet)
     master = fleet.get("master", {}).get("host", "")
     base_env = f"http://{master}:11434" if master else ""
+    # The device address rides along the same way (root .env is rsync-excluded,
+    # so the master can't resolve it itself). Apps ignore what they don't read.
+    device_env = _root_env().get("IOT_DEVICE_URL", "")
     ssh_run(m["ssh"], f"cd {rpath} && LLM_BASE_URL='{base_env}' CLUSTER_NODES='{nodes_env}' "
+                      f"IOT_DEVICE_URL='{device_env}' "
                       f"./edge up {app} --build")
 
 

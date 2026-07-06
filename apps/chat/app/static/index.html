@@ -97,6 +97,31 @@
     .node-badge.on { display: block; }
     .node-badge.on::before { content: "● "; color: #4caf50; }
     .hint { max-width: 760px; margin: 6px auto 0; color: var(--muted); font-size: 11px; }
+
+    /* -- agent activity feed (Claude-Code-ish, minimal) -- */
+    .activity {
+      border-left: 2px solid var(--border);
+      margin: 4px 0 8px;
+      padding: 2px 0 2px 12px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .activity .step { padding: 2px 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+    .activity .step .spin {
+      display: inline-block; margin-right: 6px; color: var(--accent);
+      animation: rotate 1s linear infinite;
+    }
+    @keyframes rotate { to { transform: rotate(360deg); } }
+    .activity .step.done::before { content: "✓ "; color: #4caf50; }
+    .activity .step.fail::before { content: "✗ "; color: #e05252; }
+    .activity .step.think { font-style: italic; }
+    .answer-chip {
+      display: inline-block; font-size: 11px; font-weight: 700;
+      border-radius: 6px; padding: 1px 8px; margin-right: 8px;
+      vertical-align: 1px; letter-spacing: .03em;
+    }
+    .answer-chip.yes { background: #1e3a5f; color: #7db8ff; }   /* blue LED */
+    .answer-chip.no  { background: #4a1f1a; color: #ff9d8a; }   /* red LED */
   </style>
 </head>
 <body>
@@ -104,6 +129,7 @@
     <h1>cluster chat</h1>
     <select id="model" title="Model"></select>
     <select id="node" title="Node" style="display:none"></select>
+    <select id="agent" title="Agent" style="display:none"></select>
     <div class="spacer"></div>
     <span id="status" class="off">connecting…</span>
   </header>
@@ -123,6 +149,7 @@
     const messagesEl = $("messages");
     const modelEl = $("model");
     const nodeEl = $("node");
+    const agentEl = $("agent");
     const inputEl = $("input");
     const sendEl = $("send");
     const statusEl = $("status");
@@ -204,6 +231,84 @@
       }
     }
 
+    // ----- agent list (route a message to an agents-app agent, or plain chat) -----
+    async function loadAgents() {
+      try {
+        const res = await fetch("/api/agents");
+        const { agents } = await res.json();
+        agentEl.innerHTML = '<option value="">Chat (no agent)</option>';
+        for (const a of agents) {
+          const opt = document.createElement("option");
+          opt.value = a.name;
+          opt.textContent = "agent: " + a.name;
+          opt.title = a.description || "";
+          agentEl.append(opt);
+        }
+        agentEl.style.display = agents.length ? "" : "none";
+      } catch (e) {
+        agentEl.style.display = "none";
+      }
+    }
+
+    // ----- agent activity feed -----
+    let activityEl = null;   // the working-steps list inside the active bubble
+    let workingStep = null;  // the step line currently spinning
+
+    function activityStep(text, cls) {
+      if (!activityEl) {
+        activityEl = document.createElement("div");
+        activityEl.className = "activity";
+        activeBubble.insertBefore(activityEl, activeBubble.querySelector(".text"));
+      }
+      const step = document.createElement("div");
+      step.className = "step" + (cls ? " " + cls : "");
+      step.textContent = text;
+      activityEl.append(step);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return step;
+    }
+
+    function onAgentEvent(ev) {
+      if (ev.type === "start") {
+        workingStep = activityStep("");
+        const s = document.createElement("span");
+        s.className = "spin"; s.textContent = "◐";
+        workingStep.append(s, document.createTextNode(`agent ${ev.agent} is working…`));
+      } else if (ev.type === "thinking") {
+        activityStep(ev.text, "think");
+      } else if (ev.type === "tool_call") {
+        activityStep(`${ev.tool}(${JSON.stringify(ev.args)})`);
+      } else if (ev.type === "tool_result") {
+        const ok = !(ev.result && ev.result.error);
+        const last = activityEl && activityEl.lastElementChild;
+        if (last && !last.classList.contains("done") && !last.classList.contains("fail")
+            && !last.querySelector(".spin")) {
+          last.classList.add(ok ? "done" : "fail");
+          if (!ok) last.textContent += " — " + ev.result.error;
+        }
+      } else if (ev.type === "final") {
+        if (workingStep) { workingStep.remove(); workingStep = null; }
+        const out = ev.output || {};
+        const textEl = activeBubble.querySelector(".text");
+        if (out.answer === "yes" || out.answer === "no") {
+          const chip = document.createElement("span");
+          chip.className = "answer-chip " + out.answer;
+          chip.textContent = out.answer.toUpperCase();
+          activeBubble.insertBefore(chip, textEl);
+        }
+        activeText = out.message || out.reasoning ||
+                     (out.emotion ? `face set to ${out.emotion}` : JSON.stringify(out));
+        textEl.textContent = activeText;
+        if (out.reasoning && out.message) {
+          activityStep(out.reasoning, "think");
+        }
+      } else if (ev.type === "error") {
+        if (workingStep) { workingStep.remove(); workingStep = null; }
+        activityStep(ev.message, "fail");
+      }
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
     // ----- websocket -----
     function connect() {
       const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -219,7 +324,9 @@
 
     function onMessage(ev) {
       const data = JSON.parse(ev.data);
-      if (data.type === "node") {
+      if (data.type === "agent") {
+        onAgentEvent(data.event);
+      } else if (data.type === "node") {
         const badge = activeBubble && activeBubble.querySelector(".node-badge");
         if (badge) { badge.textContent = data.name; badge.classList.add("on"); }
       } else if (data.type === "token") {
@@ -264,7 +371,9 @@
     function finishStreaming() {
       const c = activeBubble && activeBubble.querySelector(".cursor");
       if (c) c.remove();
+      if (workingStep) { workingStep.remove(); workingStep = null; }
       activeBubble = null;
+      activityEl = null;
       setStreaming(false);
     }
 
@@ -284,7 +393,8 @@
       activeBubble.append(cursor());
 
       setStreaming(true);
-      ws.send(JSON.stringify({ model, node: nodeEl.value, messages: history }));
+      ws.send(JSON.stringify({ model, node: nodeEl.value,
+                               agent: agentEl.value || undefined, messages: history }));
     }
 
     function stop() {
@@ -306,6 +416,7 @@
 
     loadModels();
     loadNodes();
+    loadAgents();
     connect();
   </script>
 </body>

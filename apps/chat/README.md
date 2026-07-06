@@ -27,7 +27,12 @@ uvicorn app.main:app --host 0.0.0.0 --port 8800
 ```
 Open http://localhost:8800. (Requires the cluster master + at least one node up.)
 
+## API
+
+Full contract — REST endpoints and the `/ws/chat` message protocol — in
+[docs/api.md](docs/api.md).
+
 ## Shape
-- `app/main.py` — FastAPI: `GET /api/models`, `GET /api/nodes`, `WS /ws/chat`, serves the frontend.
+- `app/main.py` — FastAPI: `GET /api/models`, `GET /api/nodes`, `GET /api/agents`, `WS /ws/chat`, serves the frontend.
 - `app/static/index.html` — single-page UI (no build step).
 - point `LLM_BASE_URL` elsewhere via `.env` to target a different Ollama/cluster, no code changes.

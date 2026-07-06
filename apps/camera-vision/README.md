@@ -47,11 +47,14 @@ apps/camera-vision/
   firmware/               ESP32 camera firmware (PlatformIO)
     platformio.ini        board envs: `sunfounder` (WROOM-32E), `esp32-s3` (stub)
     src/main.cpp          OV2640 init + MJPEG HTTP server (/stream, /snapshot)
-  gateway/                the AI gateway web service (Python)
-    app.py                pull stream -> YOLO -> VLM -> serve annotated view
+  app/                    the AI gateway web service (Python)
+    main.py               pull stream -> YOLO -> VLM -> serve annotated view
     static/index.html     live viewer
   Dockerfile              one image for laptop or Jetson (base via BASE_IMAGE arg)
   docker-compose.yml      run the gateway; reads this app's .env
+  Makefile                firmware build/flash/monitor shortcuts (PlatformIO)
+  requirements.txt        gateway deps for running natively (Docker installs its own)
+  docs/api.md             gateway + camera firmware HTTP endpoints
   docs/jetson-deployment.md   full Jetson (JetPack 7) bring-up + decisions log
   .env.example            copy to .env: ESP32_HOST, BASE_IMAGE, model overrides
 ```
@@ -74,10 +77,10 @@ pio device monitor -d apps/camera-vision/firmware -b 115200   # read the camera'
 ```bash
 cd apps/camera-vision
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r gateway/requirements.txt
+pip install -r requirements.txt
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128  # GPU torch
 ollama pull moondream                                                              # the VLM
-YOLO_MODEL=yolov8m-oiv7.pt CONF=0.3 ESP32_HOST=192.168.x.y python gateway/app.py
+YOLO_MODEL=yolov8m-oiv7.pt CONF=0.3 ESP32_HOST=192.168.x.y python app/main.py
 # open http://localhost:8000
 ```
 

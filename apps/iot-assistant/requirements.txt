@@ -1,0 +1,3 @@
+# The agent CLI is stdlib-only (urllib) so it runs on any cluster node
+# without a venv. Nothing to install -- this file exists so every app in
+# apps/ has the same layout.

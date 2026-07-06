@@ -11,8 +11,7 @@ deploy this stack on the cluster master so the device has one stable address for
 
 | agent | purpose |
 |---|---|
-| `led` | Signals with the two breadboard LEDs: blink rates, patterns (sos/heartbeat/strobe), and yes/no answers — **blue (GPIO 5) = yes, red (GPIO 4) = no**. Answers questions by reasoning first, then the hardware shows the verdict. |
-| `face` | Reads a chat message and picks the robot's LCD expression (neutral/happy/sad/angry/sleepy/surprised), sent to the device over MQTT (HTTP fallback). |
+| `led` | Signals with the two breadboard LEDs: blink rates, patterns (sos/heartbeat/strobe), and yes/no answers — **green (GPIO 5) = yes, red (GPIO 4) = no**. Answers questions by reasoning first, then the hardware shows the verdict. |
 
 ### Adding an agent
 
@@ -79,6 +78,6 @@ app/
     __init__.py    auto-discovers modules here exporting AGENT
     base.py        BaseAgent: tool loop, JSON contract, small-model armor
     events.py      the event wire protocol
-    led_agent.py face_agent.py
+    led_agent.py
 docs/api.md        the API contract
 ```

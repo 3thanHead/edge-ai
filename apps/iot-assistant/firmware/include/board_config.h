@@ -15,7 +15,7 @@
 
 // -- Demo actuators (wired) ---------------------------------------------------
 static constexpr int PIN_LED_1       = 4;   // red LED  -> resistor -> GND rail
-static constexpr int PIN_LED_2       = 5;   // blue LED -> resistor -> GND rail
+static constexpr int PIN_LED_2       = 5;   // green LED -> resistor -> GND rail
 static constexpr int PIN_ONBOARD_RGB = 48;  // DevKit's addressable RGB LED
 static constexpr int PIN_SERVO       = 16;  // SG90 signal (orange); 5V + GND rails
 
@@ -24,12 +24,6 @@ static constexpr int PIN_SERVO       = 16;  // SG90 signal (orange); 5V + GND ra
 // Swap in a 270/360-degree positional servo -> update this one constant.
 static constexpr int SERVO_RANGE_DEG = 180;
 
-// -- LCD (kit's 2.0" ST7789 240x320 SPI) --------------------------------------
-// Pins below MUST match the TFT_eSPI -D flags in platformio.ini.
-static constexpr int PIN_LCD_SCK  = 40;
-static constexpr int PIN_LCD_MOSI = 41;
-static constexpr int PIN_LCD_CS   = 42;
-static constexpr int PIN_LCD_DC   = 39;
-static constexpr int PIN_LCD_RST  = 38;
-static constexpr int PIN_LCD_BL   = 21;
+// -- LCD (kit's 2.0" ST7789 240x320 SPI) -- removed (Phase 3) -----------------
+// The ST7789 face was pulled from the demo build; pins 38-42 + BL 21 are free.
 // -- Audio (kit's codec module: mic + speaker) -- Phase 3, no driver yet ------

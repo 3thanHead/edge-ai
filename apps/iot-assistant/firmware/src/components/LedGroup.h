@@ -6,7 +6,7 @@
 // the yes/no answer convention are a single atomic command (one tool call for
 // the agent, no race between two requests).
 //
-// Convention: red (led_1, GPIO 4) = no/false, blue (led_2, GPIO 5) = yes/true.
+// Convention: red (led_1, GPIO 4) = no/false, green (led_2, GPIO 5) = yes/true.
 //
 // Actions: alternate [ms]        anti-phase blink
 //          together [ms]         in-phase blink
@@ -15,8 +15,8 @@
 //          on | off | solid
 class LedGroup : public Component {
  public:
-  LedGroup(const char* name, Led& red, Led& blue)
-      : Component(name), red_(red), blue_(blue) {}
+  LedGroup(const char* name, Led& red, Led& green)
+      : Component(name), red_(red), green_(green) {}
 
   void begin() override {}  // members are registered components; Board begins them
   bool handleCommand(const String& action, const String& arg) override;
@@ -24,6 +24,6 @@ class LedGroup : public Component {
 
  private:
   Led& red_;
-  Led& blue_;
+  Led& green_;
   String mode_ = "idle";
 };

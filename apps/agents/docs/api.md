@@ -14,7 +14,7 @@ Liveness plus a one-look status of everything downstream.
 ```json
 {
   "ok": true,
-  "agents": ["face", "led"],
+  "agents": ["led"],
   "device": {"device": "iot-assistant", "version": "0.3", "ip": "...", "uptime_s": 123},
   "audio": {"ingest_connected": false, "frames_in": 0, "subscribers": 0}
 }
@@ -33,7 +33,7 @@ The registered agents (auto-discovered from `app/agents/`).
 Blocking run: collects the whole event stream, returns the final output plus
 the events that led to it. The WS endpoint is the live version of this.
 
-Request: `{"input": "blink the blue led fast"}`
+Request: `{"input": "blink the green led fast"}`
 
 ```json
 {
@@ -88,9 +88,4 @@ subscribers get dropped (oldest-first) frames, not backpressure.
   "actions":   [{"tool": "set_led", "args": {...}, "ok": true}],
   "message":   "<one sentence for the user>"
 }
-```
-
-**face**
-```json
-{"emotion": "neutral|happy|sad|angry|sleepy|surprised", "reasoning": "<one sentence>"}
 ```

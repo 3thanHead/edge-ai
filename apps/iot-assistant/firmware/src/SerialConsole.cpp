@@ -74,6 +74,5 @@ void SerialConsole::printHelp() {
   Serial.println("  leds:   alternate [ms] | together [ms] | pattern <name> | answer <yes|no> | off");
   Serial.println("  rgb:    color <r,g,b> | blink [ms] | off");
   Serial.println("  servo:  angle <deg> | heading <0-360> | compass <N|NE|E|...>");
-  Serial.println("  face:   happy|sad|angry|sleepy|surprised|neutral | blink | look <dir> | wake | sleep");
   Serial.println("  meta:   list | get <name> | help");
 }

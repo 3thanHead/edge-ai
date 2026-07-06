@@ -30,14 +30,8 @@ void setup() {
   api.begin(BOARD_NAME, FW_VERSION);
   mqtt.begin("iot-assistant");
 
-  // Init blink so a fresh flash is visibly alive; the API/console can
-  // override at any time (e.g. "led_1 off").
-  if (auto* l = board.components().find("led_1")) l->handleCommand("blink", "250");
-  if (auto* l = board.components().find("led_2")) l->handleCommand("blink", "500");
-  if (auto* o = board.components().find("onboard")) {
-    o->handleCommand("color", "0,40,0");
-    o->handleCommand("blink", "1000");
-  }
+  // Boot fresh: every component comes up in its OFF state (LEDs dark, onboard
+  // RGB off, servo centered). The API and serial console drive it from there.
 
   Serial.println("[iot-assistant] ready -- type 'help'");
 }

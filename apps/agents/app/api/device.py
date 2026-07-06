@@ -7,8 +7,8 @@ REST
 HTTP  -- request/response with an ack; used when the agent needs to know the
          command landed (LED answers, servo moves).
 MQTT  -- fire-and-forget publish to iot/<device>/cmd; used for low-stakes,
-         high-frequency updates like face emotions. The device also publishes
-         retained state to iot/<device>/state, which we cache here.
+         high-frequency updates where an ack isn't needed. The device also
+         publishes retained state to iot/<device>/state, which we cache here.
 
 Both speak the same "<name> <action> [arg]" command shape as the device's
 serial console.

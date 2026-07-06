@@ -36,6 +36,12 @@ void MqttLink::ensureConnected() {
   if (mqtt_.connect(base_.c_str(), nullptr, nullptr, avail.c_str(),
                     /*willQos=*/1, /*willRetain=*/true, "offline")) {
     mqtt_.publish(avail.c_str(), "online", /*retained=*/true);
+    // Clear any retained command BEFORE subscribing, so a stale retained
+    // `cmd` from a past session can't replay on connect and drive the device
+    // out of its fresh boot-OFF state. cmd is meant to be fire-and-forget;
+    // nothing should be retained on it. (Empty payload = clear the retain.)
+    mqtt_.publish((base_ + "/cmd").c_str(), (const uint8_t*)nullptr, 0u,
+                  /*retained=*/true);
     mqtt_.subscribe((base_ + "/cmd").c_str());
     Serial.println("[mqtt] connected");
     publishState();

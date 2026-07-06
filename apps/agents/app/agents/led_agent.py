@@ -3,8 +3,8 @@
 Its whole world is the two breadboard LEDs. It decides how to blink one or
 both (rates, patterns) and answers yes/no questions with them:
 
-    red  (led_1, GPIO 4)  = no  / false
-    blue (led_2, GPIO 5)  = yes / true
+    red   (led_1, GPIO 4)  = no  / false
+    green (led_2, GPIO 5)  = yes / true
 
 Commands land on the device over HTTP (acked), so the agent knows each
 change took effect.
@@ -17,18 +17,40 @@ final.output schema (the "consistent JSON" contract):
       "message":   "<one sentence for the user>"
     }
 """
+import re
+
 from langchain_core.tools import tool
 
 from ..api.device import get_device
 from . import events
 from .base import BaseAgent
 
-# Which physical component each logical LED name maps to.
-LEDS = {"red": "led_1", "blue": "led_2", "both": "leds"}
+# Which physical component each logical LED name maps to. "blue" is kept as an
+# alias for green (led_2) so older muscle-memory commands still land right.
+LEDS = {"red": "led_1", "green": "led_2", "blue": "led_2", "both": "leds"}
 PATTERNS = ("sos", "heartbeat", "strobe")
 # Words small models like to use as rates.
 SPEED_MS = {"fast": "150", "quick": "150", "rapid": "150",
             "normal": "500", "medium": "500", "slow": "1200"}
+
+# Tell a control command ('blink the green led', 'stop both lights') from a
+# yes/no question ('is the sky blue?') by the user's WORDS, so a small model's
+# stray "answer" on a control run doesn't light an answer LED. A request is a
+# control command if it names an LED/light, uses an LED-specific verb, or pairs
+# a generic on/off/stop/turn verb with a colour. Bare 'is the stove on?' or
+# 'the earth is flat' stay questions.
+_LED_NOUNS = {"led", "leds", "light", "lights", "lamp", "lamps"}
+_LED_VERBS = {"blink", "blinking", "sos", "strobe", "alternate", "pulse",
+              "pulsing", "brightness", "toggle", "solid", "dim", "flash", "flashing"}
+_STATE_VERBS = {"on", "off", "stop", "turn", "enable", "disable", "shut"}
+_COLORS = {"red", "green", "blue", "both"}
+
+
+def _is_led_command(text: str) -> bool:
+    words = set(re.findall(r"[a-z]+", text.lower()))
+    if words & (_LED_NOUNS | _LED_VERBS):
+        return True
+    return bool((words & _STATE_VERBS) and (words & _COLORS))
 
 
 def _normalize(led: str, action: str, arg: str) -> tuple[str, str, str] | dict:
@@ -37,7 +59,7 @@ def _normalize(led: str, action: str, arg: str) -> tuple[str, str, str] | dict:
     Returns (component, action, arg) or an {'error': ...} the model can fix."""
     name = LEDS.get(led.lower().strip())
     if name is None:
-        return {"error": f"unknown led '{led}', use red|blue|both"}
+        return {"error": f"unknown led '{led}', use red|green|both"}
     a = action.lower().strip()
     arg = str(arg).lower().strip()
 
@@ -65,8 +87,8 @@ def _normalize(led: str, action: str, arg: str) -> tuple[str, str, str] | dict:
 
 @tool
 async def set_led(led: str, action: str, arg: str = "") -> dict:
-    """Control an LED. led: "red", "blue" or "both".
-    Actions for red/blue: on | off | blink (arg=interval ms) | pattern
+    """Control an LED. led: "red", "green" or "both".
+    Actions for red/green: on | off | blink (arg=interval ms) | pattern
     (arg=sos|heartbeat|strobe) | pulse (arg=period ms) | seq (arg=on,off,... ms).
     Actions for both: alternate (arg=ms) | together (arg=ms) |
     pattern (arg=name) | off."""
@@ -99,24 +121,32 @@ async def show_answer(answer: str) -> dict:
 class LedAgent(BaseAgent):
     name = "led"
     description = ("Signals with the two breadboard LEDs: blink rates, "
-                   "patterns, and yes/no answers (blue=yes, red=no).")
+                   "patterns, and yes/no answers (green=yes, red=no).")
 
     def system_prompt(self) -> str:
         return (
             "You are the LED signaling agent for a physical IoT device with "
-            "two LEDs (red and blue).\n\n"
-            "If the user asks you to control the LEDs ('blink the blue one "
+            "two LEDs (red and green).\n\n"
+            "If the user asks you to control the LEDs ('blink the green one "
             "fast', 'red LED SOS', 'both alternate'): call set_led -- rates: "
             "fast=150ms, normal=500ms, slow=1200ms; patterns: sos, heartbeat, "
             'strobe. Then reply with JSON {"reasoning": "<one sentence>", '
             '"message": "<one short sentence>"}.\n\n'
             "For ANY other request, treat it as a yes/no question about the "
-            "world. Never call a tool for these. Work out the true answer "
-            "from facts, then reply with JSON with keys in exactly this "
-            "order:\n"
-            '{"reasoning": "<your step-by-step thinking>", "answer": "yes" '
-            'or "no", "message": "<one short sentence stating the answer>"}\n'
-            "The hardware shows your answer on the LEDs for you.\n\n"
+            "world. Do NOT call any tool for these -- just reason and answer. "
+            "Think first, then give a verdict that MUST match your reasoning's "
+            'conclusion: "answer" is "yes" if the statement is true, "no" if '
+            "it is false. Reply with ONLY this JSON, keys in this exact order:\n"
+            '{"reasoning": "<one or two sentences ending in your conclusion>", '
+            '"answer": "yes" or "no", "message": "<one short sentence stating the answer>"}\n'
+            "Examples:\n"
+            'Q: Is grass green? {"reasoning": "Grass contains chlorophyll, '
+            'which is green, so grass is green.", "answer": "yes", "message": '
+            '"Yes, grass is green."}\n'
+            'Q: Is the moon made of cheese? {"reasoning": "The moon is rock '
+            'and dust, not cheese.", "answer": "no", "message": "No, the moon '
+            'is not made of cheese."}\n'
+            "The hardware shows your answer on the LEDs (green = yes, red = no).\n\n"
             "Reply with JSON only."
         )
 
@@ -147,20 +177,22 @@ class LedAgent(BaseAgent):
                 "actions": actions, "message": message}
 
     async def act_on_output(self, output, trace, input_text):
-        """The model decided; the LEDs are set here, deterministically."""
+        """The model decided; the LEDs are set here, deterministically.
+
+        show_answer uses the device's `leds answer` action, which lights the
+        verdict's LED (green=yes, red=no) AND turns the other one off -- so a
+        yes/no answer always leaves a single clean LED, whatever the LEDs were
+        doing before."""
         answer = output.get("answer")
         if answer not in ("yes", "no"):
             return
-        # The model sometimes tacks a bogus "answer" onto a control run
-        # ('blink the blue one') -- actuating it would clobber the LED state
-        # the user just asked for. Only show an answer when the input
-        # actually reads like a question; otherwise drop it.
-        q = input_text.lower().strip()
-        looks_question = q.endswith("?") or q.startswith(
-            ("is ", "are ", "can ", "does ", "do ", "did ", "will ", "would ",
-             "was ", "were ", "should ", "could ", "has ", "have ", "am ",
-             "who ", "what ", "when ", "where ", "why ", "how "))
-        if not looks_question and any(t["tool"] == "set_led" for t in trace):
+        # A control command ('blink the green one') that the model wrongly
+        # tagged with a yes/no answer must not trigger an answer heartbeat --
+        # it would clobber the LEDs the user asked for. Judge control-vs-
+        # question by the user's WORDS (device-control vocabulary a factual
+        # question wouldn't use), not by punctuation: 'the earth is flat' and
+        # 'true or false: fire is cold' are questions and must still answer.
+        if _is_led_command(input_text):
             output["answer"] = None
             return
         yield events.tool_call("show_answer", {"answer": answer})

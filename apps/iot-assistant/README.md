@@ -9,25 +9,27 @@ model, with [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) as the
 architectural reference.
 
 **Status: demo build (fw 0.3).** WiFi + HTTP API + MQTT are live; the LEDs
-blink in rates/patterns, the servo speaks degrees and compass points, and the
-EMO-style face renders on the ST7789. The cluster-side brain lives in
-[apps/agents](../agents/) — its `led` and `face` agents drive this device.
+blink in rates/patterns and the servo speaks degrees and compass points. The
+device boots with everything **off** (no startup blink). The cluster-side
+brain lives in [apps/agents](../agents/) — its `led` agent drives this device.
+The ST7789 LCD face is deferred to Phase 3 (pulled from the demo build).
 
 ## Hardware
 
 - **Board:** ESP32-S3-WROOM-1 dev board (DevKitC-1 style) on a *passive* GPIO
   extension board. Everything is breadboard-wired — no fixed shield, so pins are
   your choice. Flash + serial run over the S3's native USB.
-- **Demo wiring** (kit parts kept: LCD, audio codec + mic, speaker, servo, 2 LEDs):
+- **Demo wiring** (active parts: servo, 2 LEDs, onboard RGB; LCD + audio codec
+  are wired but Phase 3):
 
 | Part | GPIO | Console name |
 |---|---|---|
 | red LED (= no/false) | 4 | `led_1` |
-| blue LED (= yes/true) | 5 | `led_2` |
+| green LED (= yes/true) | 5 | `led_2` |
 | both as a unit | — | `leds` |
 | onboard RGB | 48 | `onboard` |
 | SG90 servo | 16 | `servo` |
-| ST7789 LCD (SPI) | SCK 40 · MOSI 41 · CS 42 · DC 39 · RST 38 · BL 21 | `face` |
+| ST7789 LCD (SPI) — Phase 3, not built | SCK 40 · MOSI 41 · CS 42 · DC 39 · RST 38 · BL 21 | — |
 | audio codec (mic + speaker) | *unwired — Phase 3* | — |
 
 All pin choices live in [`board_config.h`](firmware/include/board_config.h).
@@ -82,12 +84,11 @@ led_1  pattern <sos|heartbeat|strobe> | seq <on,off,...ms> | pulse [ms]
 leds   alternate [ms] | together [ms] | pattern <name> | answer <yes|no> | off
 onboard color <r,g,b> | blink [ms] | off
 servo  angle <deg> | heading <0-360> | compass <N|NE|E|SSW|...>
-face   happy|sad|angry|sleepy|surprised|neutral | blink | look <dir> | wake | sleep
 ```
 
 The servo's compass headings scale into `SERVO_RANGE_DEG` (180 for the SG90,
 so E=90° maps to 45° physical — swap in a 360° positional servo and change one
-constant). `leds answer` implements the yes/no convention: blue heartbeats for
+constant). `leds answer` implements the yes/no convention: green heartbeats for
 yes, red for no.
 
 The `name → action` shape is deliberate: it's the same interface the LLM agents
@@ -115,18 +116,17 @@ Makefile                    # firmware build/flash/monitor shortcuts (PlatformIO
 requirements.txt            # stdlib-only today; kept for the standard app layout
 docs/api.md                 # the device's HTTP / MQTT / serial contract
 firmware/
-  platformio.ini            # env, build flags, build_src_filter (parks unused components)
+  platformio.ini            # env, build flags, lib deps
   include/board_config.h    # THE board pin map (the only board-specific file)
   src/
-    main.cpp                # setup(): specs + init blink; loop(): tick
+    main.cpp                # setup(): specs, boots everything off; loop(): tick
     Board.{h,cpp}           # instantiates the wired components
     SerialConsole.{h,cpp}   # line-based control surface (stand-in for AI tools)
     core/
       Component.h           # abstract base: begin/loop/handleCommand/status
       ComponentRegistry.*   # owns components, fans out lifecycle calls
-    components/             # Led + DigitalOutput are live; the rest are parked
-      DigitalOutput.*  Led.*  Relay.h  Fan.*  RgbLed.*  Button.*
-      NeoPixelStrip.*  ServoMotor.*  AnalogSensor.*  Dht11Sensor.*  Face.*
+    components/             # the wired set:
+      Led.*  LedGroup.*  OnboardRgb.*  ServoMotor.*  DigitalOutput.*
 ```
 
 **Enabling a parked component:** wire it, add its pin to `board_config.h`,

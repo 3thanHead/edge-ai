@@ -5,7 +5,7 @@ REST
     GET /api/device/components   proxy of the ESP32's component list
 
 HTTP  -- request/response with an ack; used when the agent needs to know the
-         command landed (LED answers, servo moves).
+         command landed (LED answers, display writes).
 MQTT  -- fire-and-forget publish to iot/<device>/cmd; used for low-stakes,
          high-frequency updates where an ack isn't needed. The device also
          publishes retained state to iot/<device>/state, which we cache here.

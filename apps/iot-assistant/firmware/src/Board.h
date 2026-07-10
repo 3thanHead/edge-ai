@@ -2,17 +2,18 @@
 #include "core/ComponentRegistry.h"
 #include "components/Led.h"
 #include "components/LedGroup.h"
-#include "components/OnboardRgb.h"
-#include "components/ServoMotor.h"
+#include "components/St7789Lcd.h"
+#include "components/OledDisplay.h"
+#include "components/AudioCodec.h"
 
 // The physical device: instantiates every component wired to this board and
 // exposes them through a ComponentRegistry. This is the ONLY class that knows
 // the board's concrete layout (it reads pins from board_config.h). Add a
 // component by declaring it here and registering it in the constructor.
 //
-// Demo set: two breadboard LEDs (+ the `leds` group coordinating them), the
-// onboard RGB, and an SG90 servo. The ST7789 LCD face and audio (mic +
-// speaker) are Phase 3.
+// Wired set: three status LEDs (+ the `leds` group coordinating them), the
+// 2.0" ST7789 SPI face, two 0.96" I2C displays, and the audio codec module
+// (I2S + control bus + amp gate).
 class Board {
  public:
   Board();
@@ -25,9 +26,12 @@ class Board {
  private:
   ComponentRegistry registry_;
 
-  Led led1_;       // red  = no/false
-  Led led2_;       // green = yes/true
+  Led ledGreen_;    // = yes/true
+  Led ledYellow_;   // = maybe/unknown
+  Led ledRed_;      // = no/false
   LedGroup leds_;
-  OnboardRgb onboard_;
-  ServoMotor servo_;
+  St7789Lcd lcd_;
+  OledDisplay oled1_;
+  OledDisplay oled2_;
+  AudioCodec audio_;
 };

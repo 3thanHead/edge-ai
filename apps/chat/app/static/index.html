@@ -122,6 +122,42 @@
     }
     .answer-chip.yes { background: #16391f; color: #7ddb8f; }   /* green LED */
     .answer-chip.no  { background: #4a1f1a; color: #ff9d8a; }   /* red LED */
+
+    /* -- live mic feed (ESP32 -> agents hub -> /ws/audio) -- */
+    #micBtn {
+      background: none; border: 1px solid var(--border); color: var(--muted);
+      border-radius: 8px; padding: 6px 10px; font-size: 13px; font-weight: 500;
+    }
+    #micBtn.on { color: var(--accent); border-color: var(--accent); }
+    #audioPanel {
+      display: none; border-bottom: 1px solid var(--border);
+      background: var(--panel); padding: 10px 18px 8px;
+    }
+    #audioPanel.open { display: block; }
+    #scope {
+      display: block; width: 100%; height: 90px;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    }
+    .audio-row { display: flex; align-items: center; gap: 12px; margin-top: 7px; }
+    .meter {
+      flex: 1; height: 6px; border-radius: 3px; overflow: hidden;
+      background: var(--bg); border: 1px solid var(--border);
+    }
+    #meterFill { height: 100%; width: 0%; background: #4caf50; }
+    #audioStats {
+      font-size: 11px; color: var(--muted); white-space: nowrap;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+    #transcripts { margin-top: 6px; max-height: 96px; overflow-y: auto; }
+    #transcripts:empty { display: none; }
+    .transcript {
+      font-size: 13px; color: var(--text); padding: 2px 0;
+      cursor: pointer; opacity: 0.9;
+    }
+    .transcript:hover { color: var(--accent); }
+    .transcript .t-time { color: var(--muted); font-size: 11px; margin-right: 8px;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    .transcript.stt-note { color: var(--muted); font-style: italic; cursor: default; }
   </style>
 </head>
 <body>
@@ -130,9 +166,19 @@
     <select id="model" title="Model"></select>
     <select id="node" title="Node" style="display:none"></select>
     <select id="agent" title="Agent" style="display:none"></select>
+    <button id="micBtn" title="Live mic feed from the ESP32">🎙 mic</button>
     <div class="spacer"></div>
     <span id="status" class="off">connecting…</span>
   </header>
+
+  <div id="audioPanel">
+    <canvas id="scope"></canvas>
+    <div class="audio-row">
+      <div class="meter"><div id="meterFill"></div></div>
+      <span id="audioStats">connecting…</span>
+    </div>
+    <div id="transcripts" title="Click a line to put it in the composer"></div>
+  </div>
 
   <div id="messages"></div>
 
@@ -401,6 +447,175 @@
       if (!streaming || !ws || ws.readyState !== WebSocket.OPEN) return;
       ws.send(JSON.stringify({ type: "cancel" }));  // UI finalizes on the server's "cancelled"
     }
+
+    // ----- live mic feed (16 kHz mono int16 PCM from the device, via /ws/audio) -----
+    const SR = 16000;
+    const micBtn = $("micBtn");
+    const audioPanel = $("audioPanel");
+    const scope = $("scope");
+    const meterFill = $("meterFill");
+    const audioStats = $("audioStats");
+
+    const ring = new Int16Array(SR * 3);   // 3 s rolling window
+    let ringPos = 0, ringFilled = 0;
+    let audioWs = null, rafId = null, feedOpen = false, feedNote = "";
+    let lastFrameAt = 0, rateBytes = 0, rateAt = 0, kbps = 0;
+
+    function sizeScope() {
+      const dpr = window.devicePixelRatio || 1;
+      scope.width = Math.floor(scope.clientWidth * dpr);
+      scope.height = Math.floor(scope.clientHeight * dpr);
+    }
+    window.addEventListener("resize", () => { if (feedOpen) sizeScope(); });
+
+    function connectFeed() {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      audioWs = new WebSocket(`${proto}://${location.host}/ws/audio`);
+      audioWs.binaryType = "arraybuffer";
+      audioWs.onopen = () => { feedNote = ""; };
+      audioWs.onmessage = (ev) => {
+        if (ev.data.byteLength & 1) return;             // not int16-aligned
+        const samples = new Int16Array(ev.data);
+        for (let i = 0; i < samples.length; i++) {
+          ring[ringPos] = samples[i];
+          ringPos = (ringPos + 1) % ring.length;
+        }
+        ringFilled = Math.min(ringFilled + samples.length, ring.length);
+        lastFrameAt = performance.now();
+        rateBytes += ev.data.byteLength;
+      };
+      audioWs.onclose = (ev) => {
+        audioWs = null;
+        if (!feedOpen) return;
+        feedNote = ev.reason || "feed disconnected — retrying";
+        setTimeout(() => { if (feedOpen && !audioWs) connectFeed(); }, 2000);
+      };
+    }
+
+    function drawFeed(now) {
+      if (!feedOpen) return;
+      rafId = requestAnimationFrame(drawFeed);
+
+      const ctx = scope.getContext("2d");
+      const W = scope.width, H = scope.height, mid = H / 2;
+      ctx.clearRect(0, 0, W, H);
+      ctx.strokeStyle = "#353535";
+      ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(W, mid); ctx.stroke();
+
+      // Scrolling min/max waveform: each column condenses its slice of the
+      // ring, oldest samples on the left, newest at the right edge.
+      const N = ring.length;
+      ctx.strokeStyle = "#d97757";
+      ctx.beginPath();
+      for (let x = 0; x < W; x++) {
+        const from = Math.floor(x * N / W), to = Math.floor((x + 1) * N / W);
+        let lo = 32767, hi = -32768;
+        for (let i = from; i < to; i++) {
+          const s = ring[(ringPos + i) % N];
+          if (s < lo) lo = s;
+          if (s > hi) hi = s;
+        }
+        ctx.moveTo(x + 0.5, mid - (hi / 32768) * mid);
+        ctx.lineTo(x + 0.5, mid - (lo / 32768) * mid + 1);
+      }
+      ctx.stroke();
+
+      // Level meter: RMS over the newest 200 ms, mapped -60..0 dBFS.
+      let sum = 0;
+      const span = Math.min(SR * 0.2, ringFilled) | 0;
+      for (let i = 0; i < span; i++) {
+        const s = ring[(ringPos - 1 - i + N) % N];
+        sum += s * s;
+      }
+      const rms = span ? Math.sqrt(sum / span) / 32768 : 0;
+      const db = rms > 0 ? 20 * Math.log10(rms) : -100;
+      const pct = Math.max(0, Math.min(100, (db + 60) / 60 * 100));
+      meterFill.style.width = pct + "%";
+      meterFill.style.background = pct > 85 ? "#e05252" : pct > 60 ? "#d9a557" : "#4caf50";
+
+      if (now - rateAt > 1000) {
+        kbps = rateBytes / ((now - rateAt) / 1000) / 1024;
+        rateBytes = 0; rateAt = now;
+      }
+      const live = lastFrameAt && now - lastFrameAt < 2000;
+      audioStats.textContent = feedNote ? "⚠ " + feedNote
+        : live ? `● live · 16 kHz mono · ${kbps.toFixed(1)} kB/s · ${db.toFixed(0)} dBFS`
+        : "waiting for device… (is the ESP32's mic streaming?)";
+      audioStats.style.color = live && !feedNote ? "#4caf50" : "";
+    }
+
+    // ----- live speech-to-text captions (agents STT via /ws/transcripts) -----
+    const transcriptsEl = $("transcripts");
+    let sttWs = null;
+    let lastSttTs = 0;   // dedupe: reconnect replays recent history
+
+    function addTranscript(ev) {
+      if (ev.type === "stt_state") {
+        transcriptsEl.innerHTML = "";
+        if (ev.state !== "listening") {
+          const note = document.createElement("div");
+          note.className = "transcript stt-note";
+          note.textContent = ev.state === "loading"
+            ? "speech-to-text: loading model…"
+            : "speech-to-text: off (agents app has no STT)";
+          transcriptsEl.append(note);
+        }
+        return;
+      }
+      if (ev.ts && ev.ts <= lastSttTs) return;  // already shown (or a dup)
+      lastSttTs = ev.ts || lastSttTs;
+      const note = transcriptsEl.querySelector(".stt-note");
+      if (note) note.remove();
+      const line = document.createElement("div");
+      line.className = "transcript";
+      const t = new Date((ev.ts || 0) * 1000);
+      const hh = String(t.getHours()).padStart(2, "0");
+      const mm = String(t.getMinutes()).padStart(2, "0");
+      const ss = String(t.getSeconds()).padStart(2, "0");
+      line.innerHTML = `<span class="t-time">${hh}:${mm}:${ss}</span>`;
+      line.append(document.createTextNode(ev.text));
+      line.addEventListener("click", () => {   // caption -> composer
+        inputEl.value = ev.text;
+        autoGrow();
+        inputEl.focus();
+      });
+      transcriptsEl.append(line);
+      while (transcriptsEl.children.length > 8) transcriptsEl.firstChild.remove();
+      transcriptsEl.scrollTop = transcriptsEl.scrollHeight;
+    }
+
+    function connectTranscripts() {
+      if (sttWs) return;  // never run two live transcript sockets
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      sttWs = new WebSocket(`${proto}://${location.host}/ws/transcripts`);
+      sttWs.onmessage = (ev) => addTranscript(JSON.parse(ev.data));
+      sttWs.onclose = () => {
+        sttWs = null;
+        if (feedOpen) setTimeout(() => { if (feedOpen && !sttWs) connectTranscripts(); }, 3000);
+      };
+    }
+
+    function toggleFeed() {
+      feedOpen = !feedOpen;
+      audioPanel.classList.toggle("open", feedOpen);
+      micBtn.classList.toggle("on", feedOpen);
+      if (feedOpen) {
+        sizeScope();
+        ring.fill(0); ringFilled = 0; lastFrameAt = 0;
+        rateBytes = 0; rateAt = performance.now(); kbps = 0; feedNote = "";
+        lastSttTs = 0;  // fresh panel -> accept the history replay
+        connectFeed();
+        connectTranscripts();
+        rafId = requestAnimationFrame(drawFeed);
+      } else {
+        if (audioWs) audioWs.close();
+        if (sttWs) sttWs.close();
+        if (rafId) cancelAnimationFrame(rafId);
+        audioWs = null; sttWs = null; rafId = null;
+        transcriptsEl.innerHTML = "";
+      }
+    }
+    micBtn.addEventListener("click", toggleFeed);
 
     sendEl.addEventListener("click", () => (streaming ? stop() : send()));
     inputEl.addEventListener("keydown", (e) => {

@@ -4,7 +4,7 @@
 Give it an instruction in plain English; it tool-calls the device's HTTP API
 (list_components / control_component) until the job is done.
 
-    python app/main.py "blink led 1 fast and point the servo at 45 degrees"
+    python app/main.py "blink the green led fast and write hello on the lcd"
     python app/main.py --device http://192.168.1.50 "turn everything off"
 
 Endpoints (env-overridable, no IPs committed):
@@ -29,10 +29,12 @@ FLEET = REPO_ROOT / "infra" / "llm-cluster" / "fleet.json"
 # have to guess. Keep in sync with the firmware components' handleCommand().
 ACTIONS_HELP = """\
 Component action reference:
-- led_* : on | off | toggle | blink <ms> | solid | brightness <0-255>
-- onboard (RGB led): on | off | toggle | color <r,g,b> | blink <ms> | solid
-- servo : angle <0-180>
-`arg` is a single string, e.g. control_component("onboard","color","255,0,0")."""
+- led_green / led_yellow / led_red : on | off | toggle | blink <ms> | solid | brightness <0-255>
+- leds (all three as a unit) : alternate <ms> | together <ms> | answer <yes|no|maybe> | off
+- lcd (2.0" color) : text <msg, '|' = newline> | clear [color] | backlight <on|off|0-255>
+- oled_1 / oled_2 (0.96" mono) : text <msg, '|' = newline> | clear | invert <on|off>
+- audio : beep | tone <hz>[,ms] | volume <0-100> | amp <on|off>
+`arg` is a single string, e.g. control_component("lcd","text","hello|world")."""
 
 TOOLS = [
     {
@@ -53,7 +55,7 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "component name, e.g. led_1"},
+                    "name": {"type": "string", "description": "component name, e.g. led_green"},
                     "action": {"type": "string", "description": "action verb, e.g. blink"},
                     "arg": {"type": "string", "description": "optional argument, e.g. '250'"},
                 },

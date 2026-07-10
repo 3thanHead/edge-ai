@@ -69,10 +69,14 @@ void SerialConsole::listComponents() {
 
 void SerialConsole::printHelp() {
   Serial.println("commands: <name> <action> [arg]");
-  Serial.println("  led:    on | off | toggle | brightness <0-255> | blink [ms] | solid");
+  Serial.println("  led_*:  on | off | toggle | brightness <0-255> | blink [ms] | solid");
   Serial.println("          pattern <sos|heartbeat|strobe> | seq <on,off,...ms> | pulse [ms]");
-  Serial.println("  leds:   alternate [ms] | together [ms] | pattern <name> | answer <yes|no> | off");
-  Serial.println("  rgb:    color <r,g,b> | blink [ms] | off");
-  Serial.println("  servo:  angle <deg> | heading <0-360> | compass <N|NE|E|...>");
+  Serial.println("  leds:   alternate [ms] | together [ms] | pattern <name>");
+  Serial.println("          answer <yes|no|maybe> | on | off");
+  Serial.println("  lcd:    text <msg, '|'=newline> | clear [color] | backlight <on|off|0-255>");
+  Serial.println("  oled_*: text <msg> | clear | fill <white|black> | invert <on|off> | contrast <0-255>");
+  Serial.println("  audio:  beep | tone <hz>[,ms] | volume <0-100> | micgain <0-14>");
+  Serial.println("          amp <on|off> | scan");
+  Serial.println("  mic:    on | off   (stream mic PCM to the agents hub)");
   Serial.println("  meta:   list | get <name> | help");
 }

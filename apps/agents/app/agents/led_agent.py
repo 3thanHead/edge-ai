@@ -1,10 +1,11 @@
 """led -- the LED signaling agent.
 
-Its whole world is the two breadboard LEDs. It decides how to blink one or
-both (rates, patterns) and answers yes/no questions with them:
+Its whole world is the three breadboard LEDs. It decides how to blink one or
+all of them (rates, patterns) and answers yes/no questions with them:
 
-    red   (led_1, GPIO 4)  = no  / false
-    green (led_2, GPIO 5)  = yes / true
+    green  (led_green,  GPIO 21) = yes / true
+    yellow (led_yellow, GPIO 47) = maybe / unknown
+    red    (led_red,    GPIO 48) = no  / false
 
 Commands land on the device over HTTP (acked), so the agent knows each
 change took effect.
@@ -26,8 +27,9 @@ from . import events
 from .base import BaseAgent
 
 # Which physical component each logical LED name maps to. "blue" is kept as an
-# alias for green (led_2) so older muscle-memory commands still land right.
-LEDS = {"red": "led_1", "green": "led_2", "blue": "led_2", "both": "leds"}
+# alias for green so older muscle-memory commands still land right.
+LEDS = {"red": "led_red", "yellow": "led_yellow", "green": "led_green",
+        "blue": "led_green", "both": "leds", "all": "leds"}
 PATTERNS = ("sos", "heartbeat", "strobe")
 # Words small models like to use as rates.
 SPEED_MS = {"fast": "150", "quick": "150", "rapid": "150",
@@ -43,7 +45,7 @@ _LED_NOUNS = {"led", "leds", "light", "lights", "lamp", "lamps"}
 _LED_VERBS = {"blink", "blinking", "sos", "strobe", "alternate", "pulse",
               "pulsing", "brightness", "toggle", "solid", "dim", "flash", "flashing"}
 _STATE_VERBS = {"on", "off", "stop", "turn", "enable", "disable", "shut"}
-_COLORS = {"red", "green", "blue", "both"}
+_COLORS = {"red", "yellow", "green", "blue", "both", "all"}
 
 
 def _is_led_command(text: str) -> bool:
@@ -59,7 +61,7 @@ def _normalize(led: str, action: str, arg: str) -> tuple[str, str, str] | dict:
     Returns (component, action, arg) or an {'error': ...} the model can fix."""
     name = LEDS.get(led.lower().strip())
     if name is None:
-        return {"error": f"unknown led '{led}', use red|green|both"}
+        return {"error": f"unknown led '{led}', use red|yellow|green|both"}
     a = action.lower().strip()
     arg = str(arg).lower().strip()
 
@@ -87,8 +89,8 @@ def _normalize(led: str, action: str, arg: str) -> tuple[str, str, str] | dict:
 
 @tool
 async def set_led(led: str, action: str, arg: str = "") -> dict:
-    """Control an LED. led: "red", "green" or "both".
-    Actions for red/green: on | off | blink (arg=interval ms) | pattern
+    """Control an LED. led: "red", "yellow", "green" or "both" (all three).
+    Actions for a single LED: on | off | blink (arg=interval ms) | pattern
     (arg=sos|heartbeat|strobe) | pulse (arg=period ms) | seq (arg=on,off,... ms).
     Actions for both: alternate (arg=ms) | together (arg=ms) |
     pattern (arg=name) | off."""
@@ -120,13 +122,13 @@ async def show_answer(answer: str) -> dict:
 
 class LedAgent(BaseAgent):
     name = "led"
-    description = ("Signals with the two breadboard LEDs: blink rates, "
+    description = ("Signals with the three breadboard LEDs: blink rates, "
                    "patterns, and yes/no answers (green=yes, red=no).")
 
     def system_prompt(self) -> str:
         return (
             "You are the LED signaling agent for a physical IoT device with "
-            "two LEDs (red and green).\n\n"
+            "three LEDs (red, yellow and green).\n\n"
             "If the user asks you to control the LEDs ('blink the green one "
             "fast', 'red LED SOS', 'both alternate'): call set_led -- rates: "
             "fast=150ms, normal=500ms, slow=1200ms; patterns: sos, heartbeat, "

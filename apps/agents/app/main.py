@@ -20,7 +20,7 @@ import logging
 
 from fastapi import FastAPI
 
-from . import agents, api
+from . import agents, api, db
 from .api.device import get_device
 
 logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
@@ -32,5 +32,6 @@ for router in api.routers:
 
 @app.on_event("startup")
 async def startup():
+    await db.init()   # create the shared JSON store on the mounted volume
     agents.load()
     get_device()  # kick off the MQTT connection early

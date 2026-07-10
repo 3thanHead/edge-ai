@@ -10,22 +10,22 @@ args are listed in the README's control-surfaces section; `list` (serial) or
 ### `GET /health`
 
 ```json
-{"device": "iot-assistant", "version": "0.3", "ip": "192.168.x.y", "uptime_s": 123}
+{"device": "iot-assistant", "version": "0.4", "ip": "192.168.x.y", "uptime_s": 123}
 ```
 
 ### `GET /api/components`
 Every registered component with its current status.
 
 ```json
-[{"name": "led_1", "status": "off"}, {"name": "servo", "status": "angle=90"}]
+[{"name": "led_green", "status": "off"}, {"name": "lcd", "status": "bl=255"}]
 ```
 
 ### `POST /api/command?name=<component>&action=<verb>&arg=<optional>`
 Acked command (query or form params). Example:
-`POST /api/command?name=led_1&action=blink&arg=250`
+`POST /api/command?name=led_green&action=blink&arg=250`
 
 ```json
-{"ok": true, "name": "led_1", "status": "blink@250ms"}
+{"ok": true, "name": "led_green", "status": "blink 250ms"}
 ```
 Errors: `400` missing name/action, `404` unknown component, `422` the
 component rejected the action. All errors are `{"error": "..."}`.
@@ -41,6 +41,14 @@ Topic base: `iot/<device>` (default `iot/iot-assistant`).
 | `.../state` | device → | **retained** JSON of all component statuses, on change + every 10 s |
 | `.../availability` | device → | `online` / `offline` (LWT) |
 
+## Audio out (device → agents hub)
+
+The `mic` component pushes the codec's mic capture as binary WS frames to
+`ws://<MQTT_HOST>:8810/ws/audio/ingest` — 16 kHz mono int16 LE PCM,
+1024 samples (2048 B / 64 ms) per frame, auto-reconnecting, on by default
+(`mic off` to stop). Consumers subscribe via the agents app's
+`/ws/audio/subscribe`; the chat UI's 🎙 button renders the live feed.
+
 ## Serial console (115200 baud)
 
 Same commands, typed at `make monitor`; plus `list`, `get <name>`, `help`.
@@ -49,4 +57,4 @@ Same commands, typed at `make monitor`; plus `list`, `get <name>`, `help`.
 
 - `apps/agents` actuates this API as LLM tools (HTTP acked, MQTT
   fire-and-forget) — see `apps/agents/docs/api.md`.
-- `app/` here is the standalone CLI harness: `python app/main.py "blink led 1 fast"`.
+- `app/` here is the standalone CLI harness: `python app/main.py "blink the green led fast"`.

@@ -12,6 +12,27 @@ deploy this stack on the cluster master so the device has one stable address for
 | agent | purpose |
 |---|---|
 | `led` | Signals with the two breadboard LEDs: blink rates, patterns (sos/heartbeat/strobe), and yes/no answers — **green (GPIO 5) = yes, red (GPIO 4) = no**. Answers questions by reasoning first, then the hardware shows the verdict. |
+| `jobs` | Reverse-ATS job finder. Paste your **resume** and it extracts an ATS profile (titles/skills/seniority), then keeps a background [LangGraph](https://langchain-ai.github.io/langgraph/) loop pulling postings from free sources and scoring each one by how well your resume would pass *its* ATS screen. Ask `top 10` / `status` / `stop`. Matches accumulate in the shared JSON store. |
+
+### jobs — reverse-ATS matcher
+
+Unlike `led` (a one-shot tool loop), `jobs` overrides `run()` to **control a background
+worker** — its chat messages start/report/stop an ingest loop rather than answering in one
+turn:
+
+| you send | it does |
+|---|---|
+| *your resume* (paste or a path under `/data`) | LLM extracts an ATS profile → (re)starts the loop for it |
+| `top 10` | the N best-scoring jobs found so far |
+| `status` | running? how many jobs / strong matches |
+| `stop` | stop the loop |
+
+The loop is a **LangGraph** cycle `fetch → score → store`, repeated on an interval
+(`JOBS_INGEST_INTERVAL`, default 600s) by a small supervisor task — LangGraph models the
+per-cycle data flow, the supervisor owns repetition + stop. One resume is active at a time;
+a new one replaces it. Sources (`app/jobs_sources.py`, all free/no-key): **Remotive** (search)
++ **Arbeitnow**. Each new posting is scored by the cluster LLM (coverage of the job's
+requirements by your resume) and stored in collection `jobs` of the shared store.
 
 ### Adding an agent
 
@@ -68,7 +89,9 @@ discovery. `main.py` only assembles.
 
 ```
 app/
-  main.py          FastAPI assembly: mounts the api/ routers
+  main.py          FastAPI assembly: mounts the api/ routers, inits the store
+  db.py            generic JSON document store on SQLite (json_extract queries)
+  jobs_sources.py  free, no-key job-board clients (Remotive, Arbeitnow)
   api/
     health.py      GET /health
     agents.py      /api/agents/* + /ws/agents/{name}
@@ -79,5 +102,11 @@ app/
     base.py        BaseAgent: tool loop, JSON contract, small-model armor
     events.py      the event wire protocol
     led_agent.py
+    jobs_agent.py  reverse-ATS matcher: LangGraph ingest loop + IngestManager
 docs/api.md        the API contract
 ```
+
+`db.py` is the **shared JSON store**: one `documents` table keyed by a `collection`
+name, holding arbitrary JSON queryable by property (`json_extract`). It lives on the
+mounted `./data` volume (`DB_PATH=/data/agents.db`) so it persists on the master across
+restarts. Any agent can use it; `jobs` writes to collection `jobs`.

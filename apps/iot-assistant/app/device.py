@@ -1,13 +1,13 @@
 """Client for the iot-assistant device's HTTP API.
 
-The ESP32 exposes its components (LEDs, servo, later the face) over a tiny
-JSON API on port 80; this wraps it for tooling and for the LLM agent. Stdlib
+The ESP32 exposes its components (LEDs, displays, audio) over a tiny JSON
+API on port 80; this wraps it for tooling and for the LLM agent. Stdlib
 only, so it runs on any cluster node without a venv.
 
     from device import IotDevice
     dev = IotDevice("http://192.168.1.50")
-    dev.components()                     # [{"name": "led_1", "status": "..."}]
-    dev.command("led_1", "blink", "250")
+    dev.components()                     # [{"name": "led_green", "status": "..."}]
+    dev.command("led_green", "blink", "250")
 """
 import json
 import os

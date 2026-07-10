@@ -1,0 +1,2 @@
+# The mounted SQLite volume (app/db.py) — runtime data, lives on the master.
+data/

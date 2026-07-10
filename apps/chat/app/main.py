@@ -151,6 +151,45 @@ async def _stream_agent(ws: WebSocket, agent: str, input_text: str):
                             "message": f"agents app unreachable: {exc}"})
 
 
+@app.websocket("/ws/audio")
+async def audio_feed(ws: WebSocket):
+    """Relay the ESP32's live mic feed to the browser.
+
+    The device streams 16 kHz mono int16 PCM frames to the agents app's audio
+    hub (/ws/audio/ingest); this proxies the hub's /ws/audio/subscribe fan-out
+    so the frontend only ever talks to the chat host. Binary passthrough --
+    the payload is never touched. Closes with reason when the hub is down so
+    the UI can say why."""
+    await ws.accept()
+    url = AGENTS_URL.replace("http://", "ws://").replace("https://", "wss://")
+    try:
+        async with websockets.connect(f"{url}/ws/audio/subscribe") as upstream:
+            async for frame in upstream:
+                if isinstance(frame, bytes):
+                    await ws.send_bytes(frame)
+    except (OSError, websockets.WebSocketException):
+        await ws.close(code=1011, reason="agents audio hub unreachable")
+    except (WebSocketDisconnect, RuntimeError):
+        pass  # browser closed the panel; upstream unwinds via the context manager
+
+
+@app.websocket("/ws/transcripts")
+async def transcripts_feed(ws: WebSocket):
+    """Relay the agents app's live speech-to-text feed (JSON events from
+    /ws/audio/transcripts) to the browser, same pattern as /ws/audio."""
+    await ws.accept()
+    url = AGENTS_URL.replace("http://", "ws://").replace("https://", "wss://")
+    try:
+        async with websockets.connect(f"{url}/ws/audio/transcripts") as upstream:
+            async for msg in upstream:
+                if isinstance(msg, str):
+                    await ws.send_text(msg)
+    except (OSError, websockets.WebSocketException):
+        await ws.close(code=1011, reason="agents transcript feed unreachable")
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+
+
 async def _cancel(task):
     """Cancel an in-flight generation task and wait for it to fully unwind."""
     if task and not task.done():

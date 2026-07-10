@@ -2,37 +2,56 @@
 
 On-device firmware for a DIY **smart-home / IoT assistant** running on an
 **ESP32-S3**. The end goal is an on-device **LLM agent** that actuates IoT
-components as tools — lights, relays, sensors, an EMO-style animated face —
-driven by voice, wired to our own home-lab LLM cluster instead of a third-party
-cloud. Built **our way** on PlatformIO + Arduino + a generic C++ component
-model, with [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) as the
-architectural reference.
+components as tools — lights, displays, voice — driven from our own home-lab
+LLM cluster instead of a third-party cloud. Built **our way** on PlatformIO +
+Arduino + a generic C++ component model, with
+[xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) as the architectural
+reference.
 
-**Status: demo build (fw 0.3).** WiFi + HTTP API + MQTT are live; the LEDs
-blink in rates/patterns and the servo speaks degrees and compass points. The
-device boots with everything **off** (no startup blink). The cluster-side
-brain lives in [apps/agents](../agents/) — its `led` agent drives this device.
-The ST7789 LCD face is deferred to Phase 3 (pulled from the demo build).
+**Status: rebuilt hardware set (fw 0.4).** WiFi + HTTP API + MQTT are live.
+The board now carries three status LEDs, the 2.0" ST7789 color face, two
+0.96" I2C displays, and the LAFVIN audio codec module (I2S bus + control bus
+up; the codec chip itself is not yet identified — `audio scan` reports what
+ACKs on its control bus). The device boots with everything **off/blank**;
+once WiFi lands, the ST7789 shows the device name, firmware version and IP.
+The cluster-side brain lives in [apps/agents](../agents/) — its `led` agent
+drives this device.
 
 ## Hardware
 
 - **Board:** ESP32-S3-WROOM-1 dev board (DevKitC-1 style) on a *passive* GPIO
-  extension board. Everything is breadboard-wired — no fixed shield, so pins are
-  your choice. Flash + serial run over the S3's native USB.
-- **Demo wiring** (active parts: servo, 2 LEDs, onboard RGB; LCD + audio codec
-  are wired but Phase 3):
+  extension board. Everything is breadboard-wired — no fixed shield, so pins
+  are your choice. Flash + serial run over the S3's native USB. All peripherals
+  are 3.3V logic (the ST7789's VCC goes to **3V3**, not 5V).
 
 | Part | GPIO | Console name |
 |---|---|---|
-| red LED (= no/false) | 4 | `led_1` |
-| green LED (= yes/true) | 5 | `led_2` |
-| both as a unit | — | `leds` |
-| onboard RGB | 48 | `onboard` |
-| SG90 servo | 16 | `servo` |
-| ST7789 LCD (SPI) — Phase 3, not built | SCK 40 · MOSI 41 · CS 42 · DC 39 · RST 38 · BL 21 | — |
-| audio codec (mic + speaker) | *unwired — Phase 3* | — |
+| green LED (= yes/true) | 21 | `led_green` |
+| yellow LED (= maybe) | 47 | `led_yellow` |
+| red LED (= no/false) | 48 | `led_red` |
+| all three as a unit | — | `leds` |
+| LAFVIN 2.0" LCD, ST7789 240x320 (SPI) | CLK 4 · CS 5 · DC 6 · MOSI 7 · RST 15 · BL 16 | `lcd` |
+| Hosymond 0.96" I2C display #1 | SDA 17 · SCL 18 | `oled_1` |
+| Hosymond 0.96" I2C display #2 | SDA 1 · SCL 2 | `oled_2` |
+| LAFVIN audio codec (I2S + control I2C) | BCLK 9 · WS 10 · TX 12 · RX 11 · MCLK 42 · PA_EN 13 · SDA 8 · SCL 3 | `audio` |
 
 All pin choices live in [`board_config.h`](firmware/include/board_config.h).
+Notes baked into that map:
+
+- **GPIO46 avoided** for MCLK — it's input-only on the S3 and can't drive a
+  clock; MCLK sits on 42.
+- **GPIO3** (codec SCL) is a strapping pin — safe in practice since I2C is
+  open-drain with pull-ups, but confirm on first boot.
+- **GPIO48** (red LED) is also the onboard WS2812 RGB's data pin on most
+  DevKitC-1 boards. A plain digital level isn't a valid WS2812 frame so the
+  RGB should stay dark; if it glitches colors, that's the shared pin.
+- **I2C buses:** the two 0.96" displays take both hardware I2C controllers
+  (`Wire`/`Wire1`); the codec's low-traffic control bus is bit-banged.
+- **Audio module DIN/DOUT labels are host-perspective** (found the hard way):
+  the pin silkscreened "DOUT" (GPIO12) is the codec's data *input* and "DIN"
+  (GPIO11) carries the mic data out. `board_config.h` names them
+  `PIN_AUDIO_TX`/`PIN_AUDIO_RX` from the ESP's point of view; `audio swapio`
+  flips them live if a future rewire needs sanity-checking.
 
 ## Flashing from WSL
 
@@ -61,8 +80,9 @@ Pin the port if autodetect picks the wrong one: `make flash PORT=/dev/ttyUSB0`.
 (CP210x bridges show up as `ttyUSB*`; the S3's native-USB port as `ttyACM*`.)
 If the port is permission-denied, add yourself to `dialout` or use `sudo`.
 
-On a successful flash the serial log prints the chip specs and **both LEDs
-blink** (LED 1 @250 ms, LED 2 @500 ms).
+On a successful flash the serial log prints the chip specs, each `oled_*`
+greets with its own name (so you can tell the two panels apart), and the
+`audio` line reports its control-bus scan.
 
 ## Control surfaces
 
@@ -79,17 +99,37 @@ Three surfaces, one command shape — `<component> <action> [arg]`
 
 ```
 list | get <name> | help
-led_1  on | off | toggle | brightness <0-255> | blink [ms] | solid
-led_1  pattern <sos|heartbeat|strobe> | seq <on,off,...ms> | pulse [ms]
-leds   alternate [ms] | together [ms] | pattern <name> | answer <yes|no> | off
-onboard color <r,g,b> | blink [ms] | off
-servo  angle <deg> | heading <0-360> | compass <N|NE|E|SSW|...>
+led_*  on | off | toggle | brightness <0-255> | blink [ms] | solid
+led_*  pattern <sos|heartbeat|strobe> | seq <on,off,...ms> | pulse [ms]
+leds   alternate [ms] | together [ms] | pattern <name> | answer <yes|no|maybe> | off
+lcd    text <msg, '|'=newline> | clear [color] | backlight <on|off|0-255>
+oled_* text <msg, '|'=newline> | clear | fill <white|black> | invert <on|off> | contrast <0-255>
+audio  beep | tone <hz>[,ms] | volume <0-100> | micgain <0-14> | amp <on|off> | scan
+mic    on | off
 ```
 
-The servo's compass headings scale into `SERVO_RANGE_DEG` (180 for the SG90,
-so E=90° maps to 45° physical — swap in a 360° positional servo and change one
-constant). `leds answer` implements the yes/no convention: green heartbeats for
-yes, red for no.
+`leds answer` implements the verdict convention: green heartbeats for yes,
+red for no, yellow for maybe — the other two go dark. The audio module was
+identified on-device via the control-bus scan: an **ES8311** (0x18, speaker
+DAC) + **ES7210** (0x41, the dual-mic ADC) — the classic xiaozhi-style 2-in-1
+module. Both are initialized at boot as I2S slaves (16 kHz / 16-bit, MCLK =
+256·fs; register sequences ported from esp-adf's audio_hal). `audio
+beep`/`tone` gate PA_EN around playback automatically; `micgain` sets the
+ES7210 PGA in 3 dB steps (default 30 dB).
+
+`mic` streams the codec's mic capture (downmixed to **16 kHz mono int16 PCM,
+64 ms frames**) to the agents hub at `ws://<MQTT_HOST>:8810/ws/audio/ingest`,
+on by default whenever the link is up. The agents app runs VAD + Whisper over
+that stream and fans out transcripts; the chat UI's **🎙 mic** button shows
+the live waveform, level meter, and speech captions (click a caption to put
+it in the composer).
+
+Hardware gotcha found the hard way: this module's ES7210 boots with the
+channel nibble of its mode register (0x08) in a 16-slot TDM-ish state that
+the stock esp-adf driver never clears — the mic data came out as 2 samples +
+14 zeros (audio at fs/8). `AudioCodec` writes REG08=0x10 (plain 2-channel);
+the `audio` debug actions (`regr`/`regw`/`rxpeek`/`clkfreq`/`swapio`) that
+found it are kept for future bring-up sessions.
 
 The `name → action` shape is deliberate: it's the same interface the LLM agents
 actuate through (each component is a tool), so serial → agent → voice never
@@ -100,15 +140,17 @@ disturbs the component layer.
 - **Phase 1 — components.** ✅ Generic component model driving pins.
 - **Phase 2 — connectivity + agents.** ✅ WiFi + HTTP + MQTT; the cluster's
   agents ([apps/agents](../agents/)) call components as tools, driven from chat.
-- **Phase 3 — voice.** Mic (I2S) → WS stream to the agents API
-  (`/ws/audio/ingest`, already serving) → STT → agent → TTS → speaker. Needs the
-  kit codec identified + wired. xiaozhi-esp32 is the audio-pipeline reference.
+- **Phase 3 — faces + voice.** Displays wired (this build). Mic → WS stream to
+  the agents hub (`/ws/audio/ingest`) is live (`mic` component), visualized in
+  the chat UI. Next: identify the codec chip (`audio scan` → datasheet →
+  register init in `AudioCodec`) so the mic carries real audio, then STT →
+  agent → TTS → speaker. xiaozhi-esp32 is the audio-pipeline reference.
 
 ## Code layout
 
 ```
 app/                        # standalone/dev LLM agent CLI (the always-on brain is apps/agents)
-  main.py                   # python app/main.py "blink led 1 fast" -- tool-calls the device API
+  main.py                   # python app/main.py "blink the green led fast" -- tool-calls the device API
   device.py                 # stdlib client for the device's HTTP API
 Dockerfile                  # containerized agent CLI (docker compose run --rm agent "...")
 docker-compose.yml          # one-shot `agent` service; reads this app's .env
@@ -119,16 +161,22 @@ firmware/
   platformio.ini            # env, build flags, lib deps
   include/board_config.h    # THE board pin map (the only board-specific file)
   src/
-    main.cpp                # setup(): specs, boots everything off; loop(): tick
+    main.cpp                # setup(): specs, boots everything off; loop(): tick + IP splash
     Board.{h,cpp}           # instantiates the wired components
     SerialConsole.{h,cpp}   # line-based control surface (stand-in for AI tools)
     core/
       Component.h           # abstract base: begin/loop/handleCommand/status
       ComponentRegistry.*   # owns components, fans out lifecycle calls
+    net/
+      WifiLink.*  HttpApi.*  MqttLink.*         # connectivity + control surfaces
+      AudioStream.*                             # `mic`: I2S RX -> agents hub WS
     components/             # the wired set:
-      Led.*  LedGroup.*  OnboardRgb.*  ServoMotor.*  DigitalOutput.*
+      Led.*  LedGroup.*  DigitalOutput.*        # the three status LEDs
+      St7789Lcd.*                               # 2.0" color face (SPI)
+      OledDisplay.*                             # the two 0.96" I2C panels
+      AudioCodec.*                              # I2S + bit-banged control I2C + PA_EN
 ```
 
-**Enabling a parked component:** wire it, add its pin to `board_config.h`,
-declare it in `Board`, register it in the constructor, and remove its `-<...>`
-line from `build_src_filter` in `platformio.ini` (plus its library, if any).
+**Adding a component:** wire it, add its pins to `board_config.h`, declare it
+in `Board`, register it in the constructor (plus its library in
+`platformio.ini`, if any).

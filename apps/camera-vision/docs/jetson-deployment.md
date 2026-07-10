@@ -120,10 +120,10 @@ the original compact sizing (`#stream` 800px, smaller headings/captions).
 |------|---------|
 | `Dockerfile` | One image; `FROM ${BASE_IMAGE}` + flask/requests + the app |
 | `docker-compose.yml` | Same file for laptop + Jetson; nvidia runtime, host networking, `restart: unless-stopped`, persisted `models` volume |
-| `.dockerignore` | Keeps the build context tiny (only `gateway/` is copied) |
+| `.dockerignore` | Keeps the build context tiny (only `app/` is copied) |
 | `.env.example` | Documents `ESP32_HOST` / `BASE_IMAGE` / overrides; one `.env` feeds both iotctl and compose |
 | `README.md` | New "Run with Docker" section; in-container TensorRT note |
-| `gateway/static/index.html` | Viewer restored to original size |
+| `app/static/index.html` | Viewer restored to original size |
 
 ---
 

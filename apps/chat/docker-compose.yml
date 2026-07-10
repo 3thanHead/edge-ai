@@ -26,4 +26,7 @@ services:
       # nodes AND to let a chat pin to one node. Injected from fleet.json by
       # `edge up`/`edge deploy chat`; empty => fall back to the LB (no node picker).
       CLUSTER_NODES: ${CLUSTER_NODES:-}
+      # The agents app (apps/agents), usually on this same host. Unreachable =>
+      # the agent picker hides and plain chat works as before.
+      AGENTS_URL: ${AGENTS_URL:-http://host.docker.internal:8810}
     restart: unless-stopped

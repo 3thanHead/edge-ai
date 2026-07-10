@@ -10,6 +10,7 @@ enabled or disabled on its own; the camera vision pipeline is just the first one
 apps/
   camera-vision/     ESP32 camera -> YOLO detection + VLM narration -> live browser view
   chat/              streaming chatbot UI on top of the LLM cluster
+  agents/            LangChain agents (REST/WS) that reason on the cluster + actuate the ESP32
   ecomm-pipeline/    Go + LangChain print-on-demand pipeline w/ human-approval gates
 infra/
   llm-cluster/       distributed Ollama (Jetson / MacBook / Windows) behind a HAProxy
@@ -26,6 +27,8 @@ tools/
 |-----|-----------|--------|
 | [**camera-vision**](apps/camera-vision/) | Wi-Fi camera → real-time object detection + on-device vision-language narration, served as an annotated live view. Runs on a laptop or a Jetson edge box (Docker). | working |
 | [**chat**](apps/chat/) | Streaming chatbot UI (FastAPI + WebSockets) on top of the LLM cluster. | working |
+| [**agents**](apps/agents/) | LangChain agents served over REST/WebSocket, reasoning on the LLM cluster and actuating the **iot-assistant** ESP32 as tools. Chat routes a message to an agent and streams its working steps live. Ships its own MQTT broker. | working |
+| [**iot-assistant**](apps/iot-assistant/) | ESP32-S3 firmware (PlatformIO + C++) for a smart-home/IoT assistant — an on-device LLM agent that actuates IoT components as tools, driven by voice, on the home-lab LLM cluster (xiaozhi-esp32 as the reference). Phase 1: a generic component model driving pins (3 LEDs on GPIO 9/10/11). | scaffolding |
 | [**ecomm-pipeline**](apps/ecomm-pipeline/) | Go + LangChain automated print-on-demand pipeline: discover niches → design → mockups/copy → POD upload → list on eBay, pausing at human-approval gates (web dashboard). | working |
 
 ## The shared infrastructure

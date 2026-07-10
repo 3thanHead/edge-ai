@@ -1,0 +1,6 @@
+firmware
+**/__pycache__
+**/*.md
+Makefile
+.env
+.env.example

@@ -18,8 +18,8 @@ RUN pip install --no-cache-dir "flask>=3.0" "requests>=2.31"
 
 # The app lives in /opt; CWD is /data so auto-downloaded weights (and any
 # bind-mounted models) persist in the mounted volume rather than the image.
-COPY gateway/ /opt/gateway/
+COPY app/ /opt/camera-vision/app/
 WORKDIR /data
 
 EXPOSE 8000
-CMD ["python3", "/opt/gateway/app.py"]
+CMD ["python3", "/opt/camera-vision/app/main.py"]

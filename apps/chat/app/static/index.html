@@ -253,6 +253,10 @@
         if (!data.models.length) {
           modelEl.innerHTML = "<option>(no models on cluster)</option>";
         }
+        // Default to a model that's already loaded on some node, so the first
+        // message streams immediately instead of waiting on a cold model load.
+        const warm = data.models.find((m) => (data.running || []).includes(m));
+        if (warm) modelEl.value = warm;
       } catch (e) {
         modelEl.innerHTML = "<option>(failed to load models)</option>";
       }

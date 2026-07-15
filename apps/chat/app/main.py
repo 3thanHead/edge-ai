@@ -30,25 +30,40 @@ OLLAMA_URL = os.environ.get("LLM_BASE_URL", "http://localhost:11434").rstrip("/"
 #   1. Model DISCOVERY — /api/tags through the LB only reflects the one node it routes to,
 #      so we union /api/tags across nodes to build the full dropdown.
 #   2. Node PINNING — the user can target one node directly, bypassing the LB.
-# `edge up`/`edge deploy` inject CLUSTER_NODES as comma-separated `name=url` pairs from
-# fleet.json (name = the node's hostname). Legacy plain-url entries are still accepted
-# (name defaults to the url). Empty => fall back to the LB endpoint alone (local/dev).
+# `edge up`/`edge deploy` inject CLUSTER_NODES as comma-separated `name=url[|keep_alive]`
+# pairs from fleet.json (name = the node's hostname; keep_alive = that node's optional
+# model residency, e.g. "24h" or -1 = never unload). Legacy plain-url entries are still
+# accepted (name defaults to the url). Empty => fall back to the LB endpoint (local/dev).
+def _parse_keep_alive(raw):
+    """Ollama's keep_alive: bare numbers stay numbers (-1 = never unload; a string
+    \"-1\" would fail its duration parser), duration strings like "24h" pass through,
+    empty => None (the node keeps Ollama's default)."""
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return raw
+
+
 def _parse_nodes(raw):
     nodes = {}
     for item in raw.split(","):
         item = item.strip()
         if not item:
             continue
-        name, sep, url = item.partition("=")
-        if sep:
-            nodes[name.strip()] = url.strip().rstrip("/")
-        else:  # legacy: bare URL, name == URL
+        name, sep, rest = item.partition("=")
+        if not sep:  # legacy: bare URL, name == URL
             u = name.strip().rstrip("/")
-            nodes[u] = u
+            nodes[u] = {"url": u, "keep_alive": None}
+            continue
+        url, _, keep = rest.partition("|")
+        nodes[name.strip()] = {"url": url.strip().rstrip("/"),
+                               "keep_alive": _parse_keep_alive(keep.strip())}
     return nodes
 
 
-NODES = _parse_nodes(os.environ.get("CLUSTER_NODES", ""))   # hostname -> node Ollama URL
+NODES = _parse_nodes(os.environ.get("CLUSTER_NODES", ""))   # hostname -> {url, keep_alive}
 
 # The agents app (apps/agents) — chat can hand a message to one of its agents
 # instead of the plain model, and streams the agent's working events (tool
@@ -70,13 +85,28 @@ async def _node_models(client, url):
         return []  # a down node just contributes nothing to the union
 
 
+async def _node_running(client, url):
+    try:
+        resp = await client.get(f"{url}/api/ps")
+        resp.raise_for_status()
+        return [m["name"] for m in resp.json().get("models", [])]
+    except httpx.HTTPError:
+        return []
+
+
 @app.get("/api/models")
 async def list_models():
-    """Return the union of model names available across the cluster's nodes."""
-    sources = list(NODES.values()) or [OLLAMA_URL]
+    """Union of model names available across the cluster's nodes, plus which of
+    them are loaded in memory somewhere right now (union of /api/ps) — the UI
+    defaults to a running model so the first message skips the cold load."""
+    sources = [n["url"] for n in NODES.values()] or [OLLAMA_URL]
     async with httpx.AsyncClient(timeout=5) as client:
-        per_node = await asyncio.gather(*(_node_models(client, u) for u in sources))
-    return {"models": sorted({name for names in per_node for name in names})}
+        per_node, per_node_running = await asyncio.gather(
+            asyncio.gather(*(_node_models(client, u) for u in sources)),
+            asyncio.gather(*(_node_running(client, u) for u in sources)),
+        )
+    return {"models": sorted({name for names in per_node for name in names}),
+            "running": sorted({name for names in per_node_running for name in names})}
 
 
 @app.get("/api/nodes")
@@ -99,15 +129,40 @@ async def list_agents():
         return {"agents": []}
 
 
+# Fire-and-forget keep-alive bumps; the set holds strong refs so asyncio can't GC
+# a task mid-flight.
+_keep_alive_tasks = set()
+
+
+async def _touch_keep_alive(url, model, keep_alive):
+    """Apply a node's configured keep_alive after the LB routed a generation to it.
+
+    keep_alive only travels inside a generation request, and a load-balanced request
+    can't know its node up front — so once HAProxy reports who served (X-Served-By),
+    poke that node directly. /api/generate with no prompt doesn't generate anything:
+    it just (re)sets how long the already-loaded model stays in memory."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(f"{url}/api/generate",
+                              json={"model": model, "keep_alive": keep_alive})
+    except httpx.HTTPError:
+        pass  # a node that just served us but won't answer simply misses its bump
+
+
 async def _stream_chat(ws: WebSocket, model, messages, node=None):
     """Stream one completion to the browser. Cancelling this task unwinds the httpx
     context managers, which closes the upstream request so Ollama stops generating.
 
     `node` (a name from /api/nodes) pins generation to that node's Ollama directly;
-    otherwise it goes through the load-balanced LB endpoint."""
+    otherwise it goes through the load-balanced LB endpoint. Either way the serving
+    node's fleet.json keep_alive (if any) is applied: in the request itself when
+    pinned, via a follow-up bump when the LB picked the node."""
     target = NODES.get(node) if node else None     # None => use the LB
-    url = target or OLLAMA_URL
+    url = target["url"] if target else OLLAMA_URL
     payload = {"model": model, "messages": messages, "stream": True}
+    if target and target["keep_alive"] is not None:
+        payload["keep_alive"] = target["keep_alive"]
+    served = None
     try:
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream("POST", f"{url}/api/chat", json=payload) as resp:
@@ -126,6 +181,12 @@ async def _stream_chat(ws: WebSocket, model, messages, node=None):
                         await ws.send_json({"type": "token", "content": token})
                     if chunk.get("done"):
                         break
+        served_cfg = NODES.get(served) if (served and not target) else None
+        if served_cfg and served_cfg["keep_alive"] is not None:
+            task = asyncio.create_task(
+                _touch_keep_alive(served_cfg["url"], model, served_cfg["keep_alive"]))
+            _keep_alive_tasks.add(task)
+            task.add_done_callback(_keep_alive_tasks.discard)
         await ws.send_json({"type": "done"})
     except httpx.HTTPError as exc:
         await ws.send_json({"type": "error", "message": f"cluster error: {exc}"})

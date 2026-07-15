@@ -31,7 +31,7 @@ log = logging.getLogger("agents")
 # The cluster endpoint (HAProxy master) + a tool-calling-capable model it
 # serves. Env-only (.env / compose) -- no IPs committed.
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:11434").rstrip("/")
-LLM_MODEL = os.environ.get("LLM_MODEL", "llama3.2:3b")
+LLM_MODEL = os.environ.get("LLM_MODEL", "qwen3:4b-instruct")
 
 
 class BaseAgent(ABC):
@@ -73,6 +73,11 @@ class BaseAgent(ABC):
         yield  # pragma: no cover -- makes this an (empty) async generator
 
     def llm(self) -> ChatOllama:
+        # The default model is the non-thinking qwen3 instruct: hybrid-thinking
+        # builds burn thinking tokens every tool-loop step (too slow on edge
+        # hardware), and their "think off" switch leaks the monologue into
+        # content on current Ollama. Don't send a reasoning flag — non-thinking
+        # models can reject it.
         return ChatOllama(base_url=LLM_BASE_URL, model=LLM_MODEL,
                           temperature=0)
 

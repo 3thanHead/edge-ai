@@ -83,7 +83,7 @@ subscribers get dropped (oldest-first) frames, not backpressure.
 **led**
 ```json
 {
-  "answer":    "yes" | "no" | null,
+  "answer":    "yes" | "no" | "maybe" | null,
   "reasoning": "<one sentence>",
   "actions":   [{"tool": "set_led", "args": {...}, "ok": true}],
   "message":   "<one sentence for the user>"

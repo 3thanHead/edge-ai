@@ -32,10 +32,6 @@ services:
       # Shared JSON store (app/db.py). Lives on the mounted ./data volume
       # below, so it persists on the master across restarts.
       DB_PATH: /data/agents.db
-      # jobs agent: how often the reverse-ATS loop re-polls sources, and how
-      # many new postings it scores per cycle (bounds LLM load on the cluster).
-      JOBS_INGEST_INTERVAL: ${JOBS_INGEST_INTERVAL:-600}
-      JOBS_MAX_PER_CYCLE: ${JOBS_MAX_PER_CYCLE:-12}
       # Speech-to-text over the device mic stream (faster-whisper, CPU int8).
       # Model size vs CPU cost: tiny (fastest) / base (default) / small.
       STT_MODEL: ${STT_MODEL:-base}

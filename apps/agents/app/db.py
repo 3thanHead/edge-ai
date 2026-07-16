@@ -5,14 +5,14 @@ One table, `documents`, holds arbitrary JSON blobs discriminated by a
 `json_extract`). Agents get a schemaless place to accumulate data without a
 migration per shape:
 
-    await db.insert("jobs", {...}, dedup_key=url)     # False if the key exists
-    await db.find("jobs", where={"verdict": "strong"},
-                  order_by="match_score", desc=True, limit=20)
-    await db.count("jobs")
+    await db.insert("readings", {...}, dedup_key=url)  # False if the key exists
+    await db.find("readings", where={"kind": "temperature"},
+                  order_by="value", desc=True, limit=20)
+    await db.count("readings")
 
 The file lives on a mounted volume (DB_PATH -> /data/agents.db in compose) so
-it persists on the cluster master across container restarts. WAL mode lets the
-background ingest loop write while the API reads.
+it persists on the cluster master across container restarts. WAL mode lets
+background writers work while the API reads.
 
 Queries filter/sort by scalar JSON properties (json_extract on a path like
 "$.match_score"); a plain "match_score" is treated as "$.match_score". Array

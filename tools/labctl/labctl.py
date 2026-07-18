@@ -353,8 +353,15 @@ def _root_env():
 
 
 def _cluster_nodes_env(fleet):
-    """`name=url` pairs for CLUSTER_NODES, from fleet.json (name = node hostname)."""
-    return ",".join(f"{n['name']}=http://{n['host']}:11434" for n in fleet.get("nodes", []))
+    """`name=url[|keep_alive]` pairs for CLUSTER_NODES, from fleet.json (name = node
+    hostname; keep_alive = optional per-node model residency, e.g. "24h" or -1)."""
+    pairs = []
+    for n in fleet.get("nodes", []):
+        pair = f"{n['name']}=http://{n['host']}:11434"
+        if n.get("keep_alive") not in (None, ""):
+            pair += f"|{n['keep_alive']}"
+        pairs.append(pair)
+    return ",".join(pairs)
 
 
 # ---------- commands ----------
@@ -472,6 +479,8 @@ def cmd_fleet(args):
         node = {"name": name, "host": host, "ssh": ssh, "os": node_os}
         if ex.get("models"):
             node["models"] = ex["models"]
+        if ex.get("keep_alive") not in (None, ""):
+            node["keep_alive"] = ex["keep_alive"]
         nodes.append(node)
         i += 1
 

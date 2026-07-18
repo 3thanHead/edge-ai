@@ -20,8 +20,10 @@ services:
       # The cluster's single endpoint (HAProxy, native Ollama API); `edge`
       # style: real master injected via .env, this default is a fallback.
       LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
-      # Must be a tool-calling-capable model served by every cluster node.
-      LLM_MODEL: ${LLM_MODEL:-llama3.2:3b}
+      # Must be a tool-calling-capable model served somewhere on the cluster —
+      # HAProxy's model-aware routing sends the request to a node that has it
+      # (qwen3:4b lives on the nano, kept warm via fleet.json keep_alive).
+      LLM_MODEL: ${LLM_MODEL:-qwen3:4b-instruct}
       # The ESP32's HTTP API (its LAN IP or mDNS name if resolvable).
       IOT_DEVICE_URL: ${IOT_DEVICE_URL:-http://iot-assistant.local}
       # The broker below; agents publish fire-and-forget commands through it.
@@ -30,10 +32,6 @@ services:
       # Shared JSON store (app/db.py). Lives on the mounted ./data volume
       # below, so it persists on the master across restarts.
       DB_PATH: /data/agents.db
-      # jobs agent: how often the reverse-ATS loop re-polls sources, and how
-      # many new postings it scores per cycle (bounds LLM load on the cluster).
-      JOBS_INGEST_INTERVAL: ${JOBS_INGEST_INTERVAL:-600}
-      JOBS_MAX_PER_CYCLE: ${JOBS_MAX_PER_CYCLE:-12}
       # Speech-to-text over the device mic stream (faster-whisper, CPU int8).
       # Model size vs CPU cost: tiny (fastest) / base (default) / small.
       STT_MODEL: ${STT_MODEL:-base}

@@ -12,7 +12,7 @@ change took effect.
 
 final.output schema (the "consistent JSON" contract):
     {
-      "answer":    "yes" | "no" | null,   # null when not a yes/no question
+      "answer":    "yes" | "no" | "maybe" | null,   # null when not a question
       "reasoning": "<one sentence>",
       "actions":   [{"led": "...", "action": "...", "arg": "..."}],
       "message":   "<one sentence for the user>"
@@ -108,6 +108,8 @@ def _norm_answer(value) -> str | None:
         return "yes"
     if s in ("no", "false", "0"):
         return "no"
+    if s in ("maybe", "unknown", "unsure", "uncertain"):
+        return "maybe"
     return None
 
 
@@ -123,34 +125,9 @@ async def show_answer(answer: str) -> dict:
 class LedAgent(BaseAgent):
     name = "led"
     description = ("Signals with the three breadboard LEDs: blink rates, "
-                   "patterns, and yes/no answers (green=yes, red=no).")
+                   "patterns, and answers (green=yes, red=no, yellow=maybe).")
 
-    def system_prompt(self) -> str:
-        return (
-            "You are the LED signaling agent for a physical IoT device with "
-            "three LEDs (red, yellow and green).\n\n"
-            "If the user asks you to control the LEDs ('blink the green one "
-            "fast', 'red LED SOS', 'both alternate'): call set_led -- rates: "
-            "fast=150ms, normal=500ms, slow=1200ms; patterns: sos, heartbeat, "
-            'strobe. Then reply with JSON {"reasoning": "<one sentence>", '
-            '"message": "<one short sentence>"}.\n\n'
-            "For ANY other request, treat it as a yes/no question about the "
-            "world. Do NOT call any tool for these -- just reason and answer. "
-            "Think first, then give a verdict that MUST match your reasoning's "
-            'conclusion: "answer" is "yes" if the statement is true, "no" if '
-            "it is false. Reply with ONLY this JSON, keys in this exact order:\n"
-            '{"reasoning": "<one or two sentences ending in your conclusion>", '
-            '"answer": "yes" or "no", "message": "<one short sentence stating the answer>"}\n'
-            "Examples:\n"
-            'Q: Is grass green? {"reasoning": "Grass contains chlorophyll, '
-            'which is green, so grass is green.", "answer": "yes", "message": '
-            '"Yes, grass is green."}\n'
-            'Q: Is the moon made of cheese? {"reasoning": "The moon is rock '
-            'and dust, not cheese.", "answer": "no", "message": "No, the moon '
-            'is not made of cheese."}\n'
-            "The hardware shows your answer on the LEDs (green = yes, red = no).\n\n"
-            "Reply with JSON only."
-        )
+    # system prompt: prompts/led.md (BaseAgent loads it by name)
 
     def tools(self):
         return [set_led]
@@ -173,7 +150,7 @@ class LedAgent(BaseAgent):
             elif actions:
                 message = "LEDs updated."
             else:
-                message = raw_text or "I can only signal with the two LEDs."
+                message = raw_text or "I can only signal with the three LEDs."
         return {"answer": answer,
                 "reasoning": str(model_json.get("reasoning") or ""),
                 "actions": actions, "message": message}
@@ -181,12 +158,12 @@ class LedAgent(BaseAgent):
     async def act_on_output(self, output, trace, input_text):
         """The model decided; the LEDs are set here, deterministically.
 
-        show_answer uses the device's `leds answer` action, which lights the
-        verdict's LED (green=yes, red=no) AND turns the other one off -- so a
-        yes/no answer always leaves a single clean LED, whatever the LEDs were
-        doing before."""
+        show_answer uses the device's `leds answer` action, which heartbeats
+        the verdict's LED (green=yes, red=no, yellow=maybe) AND turns the
+        other two off -- so an answer always leaves a single clean LED,
+        whatever the LEDs were doing before."""
         answer = output.get("answer")
-        if answer not in ("yes", "no"):
+        if answer not in ("yes", "no", "maybe"):
             return
         # A control command ('blink the green one') that the model wrongly
         # tagged with a yes/no answer must not trigger an answer heartbeat --

@@ -22,9 +22,10 @@ services:
       # flows through here (load-balanced, fault-tolerant). `edge up`/`edge deploy`
       # inject the real master from fleet.json; this default is just a fallback.
       LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
-      # Per-node `name=url` pairs (name = hostname): used to union the model list across
-      # nodes AND to let a chat pin to one node. Injected from fleet.json by
-      # `edge up`/`edge deploy chat`; empty => fall back to the LB (no node picker).
+      # Per-node `name=url[|keep_alive]` pairs (name = hostname; keep_alive = optional
+      # per-node model residency, e.g. "24h"): used to union the model list across
+      # nodes, let a chat pin to one node, AND keep models warm per fleet.json policy.
+      # Injected from fleet.json by `edge up`/`edge deploy chat`; empty => LB only.
       CLUSTER_NODES: ${CLUSTER_NODES:-}
       # The agents app (apps/agents), usually on this same host. Unreachable =>
       # the agent picker hides and plain chat works as before.

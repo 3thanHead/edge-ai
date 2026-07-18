@@ -17,6 +17,7 @@ import json
 import logging
 import os
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -31,7 +32,17 @@ log = logging.getLogger("agents")
 # The cluster endpoint (HAProxy master) + a tool-calling-capable model it
 # serves. Env-only (.env / compose) -- no IPs committed.
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:11434").rstrip("/")
-LLM_MODEL = os.environ.get("LLM_MODEL", "llama3.2:3b")
+LLM_MODEL = os.environ.get("LLM_MODEL", "qwen3:4b-instruct")
+
+# System prompts live as markdown next to the agents, one file per prompt, so
+# prompt text can be read and edited without touching code.
+PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+
+def load_prompt(name: str) -> str:
+    """The prompt text of prompts/<name>.md. Read per call, not cached, so a
+    live-mounted file can be tweaked without a restart."""
+    return (PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8").strip()
 
 
 class BaseAgent(ABC):
@@ -42,8 +53,11 @@ class BaseAgent(ABC):
     max_steps: int = 8      # model round-trips per run
     tool_budget: int = 6    # executed tool calls per run
 
-    @abstractmethod
-    def system_prompt(self) -> str: ...
+    def system_prompt(self) -> str:
+        """prompts/<name>.md by default (raises if the file is missing --
+        every tool-loop agent needs one). Override only when the prompt
+        must be composed dynamically or the agent overrides run()."""
+        return load_prompt(self.name)
 
     @abstractmethod
     def tools(self) -> list[BaseTool]: ...
@@ -73,6 +87,11 @@ class BaseAgent(ABC):
         yield  # pragma: no cover -- makes this an (empty) async generator
 
     def llm(self) -> ChatOllama:
+        # The default model is the non-thinking qwen3 instruct: hybrid-thinking
+        # builds burn thinking tokens every tool-loop step (too slow on edge
+        # hardware), and their "think off" switch leaks the monologue into
+        # content on current Ollama. Don't send a reasoning flag — non-thinking
+        # models can reject it.
         return ChatOllama(base_url=LLM_BASE_URL, model=LLM_MODEL,
                           temperature=0)
 

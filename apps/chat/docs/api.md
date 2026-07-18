@@ -7,11 +7,13 @@ single-page UI; everything below is what that UI talks to.
 
 ### `GET /api/models`
 Union of model names available across the cluster's nodes (each node's
-`/api/tags`, merged). Falls back to the load-balanced endpoint alone when no
-per-node info is configured.
+`/api/tags`, merged), plus `running`: which of them are loaded in memory on
+some node right now (each node's `/api/ps`, merged). The UI defaults its
+picker to a running model so the first message skips the cold load. Falls
+back to the load-balanced endpoint alone when no per-node info is configured.
 
 ```json
-{"models": ["llama3.2:3b", "moondream:latest"]}
+{"models": ["llama3.2:3b", "moondream:latest"], "running": ["llama3.2:3b"]}
 ```
 
 ### `GET /api/nodes`

@@ -160,19 +160,12 @@ def master_endpoint():
     return MASTER_FALLBACK
 
 
-def cluster_model(required=False):
-    """The cluster's shared model — fleet.json is the source of truth.
-
-    Returns "" when the fleet doesn't name one. Display paths print that as
-    "(unset)"; anything that would ACT on a model passes required=True and
-    exits rather than guessing."""
-    fleet = load_fleet()
-    model = (fleet or {}).get("model", "")
-    if not model and required:
-        say(f"{C['r']}no model in {FLEET.name}.{C['x']} fleet.json's \"model\" is the "
-            f"source of truth — set it with `edge model set <name>` or `edge fleet`.")
-        sys.exit(1)
-    return model
+def cluster_model():
+    """The cluster's shared default model — fleet.json's "model" is the source of
+    truth. "" when there's no fleet or it names none (shown as "unset"). `edge
+    fleet` requires a model at setup, so a fleet built the normal way always has
+    one; callers that already loaded the fleet just read fleet["model"]."""
+    return (load_fleet() or {}).get("model", "")
 
 
 def _san(model):
@@ -202,8 +195,11 @@ def llm_nodes(nodes):
 
 
 def image_node(nodes):
-    """The image-generation node, if the fleet declares one (role: "image")."""
-    return next((n for n in nodes if n.get("role") == "image"), None)
+    """The image-generation node the fleet declares (role "image") -- but only if it
+    actually names a model. Without one there's nothing to serve, so it's ignored:
+    no IMAGE_MODEL/IMAGE_BASE_URL, and it drops out of health + model listings."""
+    return next((n for n in nodes
+                 if n.get("role") == "image" and n.get("models")), None)
 
 
 def image_endpoint(n):
@@ -369,8 +365,7 @@ def cluster_env():
     img = image_node(fleet.get("nodes", []))
     if img:
         env["IMAGE_BASE_URL"] = f"http://{image_endpoint(img)}"
-        if img.get("models"):
-            env["IMAGE_MODEL"] = img["models"][0]
+        env["IMAGE_MODEL"] = img["models"][0]
     # The ESP32's address lives in the repo-root .env next to the firmware's
     # WiFi creds -- same no-IPs-in-git policy as fleet.json. (The storefront's
     # commerce keys moved to the storefront-ai repo's own .env.) A root .env
@@ -506,10 +501,9 @@ def cmd_fleet(args):
     if not master_host:
         say(f"{C['r']}master IP is required — nothing written.{C['x']}"); sys.exit(1)
     ssh_user = _ask("SSH login username — the account name, NOT a password (for `edge deploy`)", default_user)
-    # Asked, never defaulted: this value is what every node pulls and what
-    # HAProxy routes on. Guessing it here is how a fleet ends up serving a model
-    # nobody chose.
-    model = _ask("Cluster default model (e.g. qwen3:4b-instruct)", existing.get("model"))
+    # The cluster default: what every node pulls and what HAProxy routes on.
+    # Pre-filled from the current fleet on re-run; typed fresh on first setup.
+    model = _ask("Cluster default model", existing.get("model"))
     if not model:
         say(f"{C['r']}a model is required — nothing written.{C['x']}"); sys.exit(1)
 
@@ -679,7 +673,7 @@ def _deploy_master(fleet, rpath):
     rsync_repo(m["ssh"], rpath)
     say("-> rendering model-aware haproxy.cfg from fleet and shipping it…")
     cfg = render_haproxy(llm_nodes(fleet.get("nodes", [])),
-                         cluster_model(required=True))
+                         fleet.get("model", ""))
     if DRY_RUN:
         say(cfg)
     scp_text(m["ssh"], cfg, f"{rpath}/infra/llm-cluster/master/haproxy.cfg")
@@ -727,7 +721,7 @@ def cmd_deploy(args):
     global DRY_RUN
     DRY_RUN = args.dry_run
     fleet = load_fleet(required=True)
-    model = cluster_model(required=True)
+    model = fleet.get("model", "")
     rpath = fleet.get("remote_path", "~/iot_ai")
     target = args.target
     if DRY_RUN:
@@ -922,8 +916,12 @@ def cmd_model(args):
         if not have("ollama"):
             say(f"{C['r']}ollama not found{C['x']} — run `edge install-node` first."); sys.exit(1)
         # `edge model pull` with no name pulls whatever the fleet declares.
-        sys.exit(run(["ollama", "pull", args.name or cluster_model(required=True)],
-                     check=False))
+        name = args.name or cluster_model()
+        if not name:
+            say(f"{C['r']}nothing to pull{C['x']} — name a model or set the fleet "
+                f"default with `edge model set <name>` / `edge fleet`.")
+            sys.exit(1)
+        sys.exit(run(["ollama", "pull", name], check=False))
     if args.action == "set":
         if not args.name:
             say(f"{C['r']}usage: edge model set <name> [--node <name>]{C['x']}")
@@ -931,7 +929,7 @@ def cmd_model(args):
         model = args.name
         fleet = load_fleet(required=True)
         nodes = fleet.get("nodes", [])
-        default_model = cluster_model(required=True)
+        default_model = fleet.get("model", "")
 
         if args.node:
             targets = [n for n in nodes if n["name"] == args.node]

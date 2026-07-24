@@ -19,6 +19,7 @@ Verify from another machine:
 curl http://192.168.1.11:11434/api/tags
 ```
 
-> ⚠️ If this is the **same** 8GB Jetson that runs the camera app, it can't comfortably
-> hold YOLO + moondream + a 3-4B text model at once. Use it as an LLM node only when the
-> camera app is stopped, or keep the camera and LLM roles on separate Jetsons.
+> ⚠️ On an 8GB Jetson the camera app's stack (YOLOv8m + the moondream VLM on Ollama)
+> already uses most of the ~7.3 GiB usable, so the same box can't also serve a cluster
+> text model comfortably. If this Jetson runs the camera app, use it as an LLM node only
+> while that app is stopped — or keep the camera and LLM roles on separate boxes.

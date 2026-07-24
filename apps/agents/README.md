@@ -13,6 +13,10 @@ deploy this stack on the cluster master so the device has one stable address for
 |---|---|
 | `led` | Signals with the three breadboard LEDs: blink rates, patterns (sos/heartbeat/strobe), and answers — **green (GPIO 21) = yes, red (GPIO 48) = no, yellow (GPIO 47) = maybe**. Answers questions by reasoning first, then the hardware shows the verdict. |
 
+> The e-commerce **`shop`** agent moved to its own repo,
+> [`storefront-ai`](https://github.com/3thanHead/storefront-ai) — it consumes
+> this cluster as an LLM endpoint but ships and deploys independently.
+
 ### Adding an agent
 
 Drop a module in `app/agents/` that exports `AGENT` (a `BaseAgent` instance):
@@ -21,7 +25,8 @@ name, description, LangChain `@tool` functions, and a system prompt in
 register — the module is auto-discovered. Agents are stateless, so one instance
 serves concurrent runs; LLM calls load-balance across the cluster via HAProxy.
 
-**Design note for small models (llama3.2:3b):** let the model *decide* and let code
+**Design note for small models (a 3-4B class model like `qwen3:4b-instruct`):** let
+the model *decide* and let code
 *actuate*. The guaranteed JSON contract is assembled in `build_output()` from the
 trace of executed tool calls (ground truth), and decision→hardware translation
 happens in `act_on_output()` — deterministic, not model-wired. Tool inputs are
@@ -57,8 +62,9 @@ root .env), `./edge deploy agents` to ship it to the master.
 Dev without docker: `pip install -r requirements.txt`, then
 `LLM_BASE_URL=... IOT_DEVICE_URL=... uvicorn app.main:app --port 8810`.
 
-**The cluster model must support tool calling** (`llama3.2:3b`, the fleet default —
-`./edge model set llama3.2:3b` if the nodes are serving something else). Bigger
+**The cluster model must support tool calling.** The fleet's model lives in
+`fleet.json` (currently `qwen3:4b-instruct`); `./edge model set <name>` changes it
+everywhere and re-renders HAProxy routing. Bigger
 model = better judgement; the harness stays the same.
 
 ## Shape

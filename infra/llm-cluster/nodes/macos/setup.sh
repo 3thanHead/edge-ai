@@ -3,7 +3,9 @@
 # Ollama on macOS uses the Apple Silicon GPU (Metal) automatically.  Usage: bash setup.sh
 set -euo pipefail
 
-MODEL="${LLM_MODEL:-llama3.2:3b}"
+# No default: fleet.json's "model" is the source of truth and `edge deploy`
+# always passes it in. Guessing here would pull a model nobody chose.
+MODEL="${LLM_MODEL:?set LLM_MODEL (edge deploy passes it from fleet.json)}"
 
 if ! command -v ollama >/dev/null 2>&1; then
   echo "==> Installing Ollama…"

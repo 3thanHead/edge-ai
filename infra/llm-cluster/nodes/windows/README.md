@@ -12,7 +12,7 @@ What it does:
 1. Installs Ollama via `winget` (if missing).
 2. Sets a persistent machine env var `OLLAMA_HOST=0.0.0.0:11434` so it listens on the LAN.
 3. Opens the Windows Firewall for inbound TCP 11434.
-4. Restarts Ollama and pulls `llama3.2:3b`.
+4. Restarts Ollama and pulls the model `fleet.json` names (`LLM_MODEL`; no default).
 5. Self-checks `/api/tags`.
 
 Verify from another machine:

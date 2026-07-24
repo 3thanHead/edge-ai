@@ -2,14 +2,18 @@
   "_comment": "Fleet definition for `edge deploy`. Don't hand-edit this example — run `edge fleet` to generate fleet.json (gitignored) interactively, or copy this file to fleet.json and fill it in. Single source of truth for the deploy + the HAProxy backend list.",
   "_order_note": "Node ORDER is the routing priority: HAProxy `balance first` sends each request to the first-listed healthy node and overflows to later ones only when it's saturated or down. List your strongest/preferred node first.",
   "_ssh_note": "ssh values: 'user@host' (SSH+rsync), 'interop' (a Windows node managed via WSL->Windows interop when you deploy from that box), or '' (skip; set up manually).",
-  "_models_note": "'model' is the cluster default. A node may add an optional 'models' list; nodes without one serve the default. `edge model set <name> [--node X]` pulls + records these, and HAProxy routes each request to a node that actually has the requested model.",
+  "_models_note": "'model' is the cluster default (use the NON-thinking qwen instruct build — hybrid-thinking models burn tokens per tool step and leak the monologue). A node may add an optional 'models' list; nodes without one serve the default. `edge model set <name> [--node X]` pulls + records these, and HAProxy routes each request to a node that actually has the requested model.",
+  "_embed_note": "An embedding model (e.g. nomic-embed-text) can ride on a text node's 'models' list, for any app doing semantic search / vector recall. Pull it onto a node without changing the default: `edge model set nomic-embed-text --node <name>`. (storefront-ai no longer needs one — it moved to SQLite with no vector recall.)",
   "_keep_alive_note": "A node may set optional 'keep_alive': how long its Ollama keeps a model loaded in memory after a request (duration string like \"24h\", or -1 = never unload). Omit for Ollama's default (5m: the first request after idle cold-loads the model). The chat app applies it whenever that node serves a request, pinned or load-balanced.",
-  "model": "llama3.2:3b",
+  "_role_note": "A node may set 'role': 'image' — it hosts image models (ComfyUI/SD API on optional 'image_port', default 8188) instead of the text-LLM rotation: excluded from HAProxy/CLUSTER_NODES/Ollama ops, and apps get IMAGE_BASE_URL pointing at it. Typical split: GPU box = image, small/efficient nodes = document flow.",
+  "_image_model_note": "An image node declares its model the same way any node does — a 'models' list. The FIRST entry is what apps receive as IMAGE_MODEL; the rest are just also installed there. `edge model set <name> --node <image node>` promotes one to the front (it only records — ComfyUI weights are installed on that box, not pulled by Ollama).",
+  "_usecase_note": "Roles map onto storefront-ai's needs: it pins qwen2.5:7b-instruct as its workhorse (category + subreddit research, drills, product/listing text) and can optionally offload the knowledge-heavy category brainstorm to a bigger model (qwen2.5:14b) on a strong node — so declare 7b (+ optional 14b) on your beefiest text node (a 12GB+ Mac), keep small Jetsons on the 4b default for overflow, and route it all through the HAProxy master. The GPU box (role image) = FLUX product mockups + POD print files, hit directly on image_port (Feature 2+).",
+  "model": "qwen3:4b-instruct",
   "remote_path": "~/iot_ai",
   "master": { "host": "", "ssh": "youruser@" },
   "nodes": [
-    { "name": "node1", "host": "", "ssh": "youruser@", "os": "linux", "keep_alive": "24h" },
-    { "name": "node2", "host": "", "ssh": "youruser@", "os": "macos" },
-    { "name": "node3", "host": "", "ssh": "interop", "os": "windows", "models": ["llama3.2:3b", "llama3.1:8b"] }
+    { "name": "node1", "host": "", "ssh": "youruser@", "os": "linux", "keep_alive": "24h", "models": ["qwen3:4b-instruct"] },
+    { "name": "node2", "host": "", "ssh": "youruser@", "os": "macos", "keep_alive": "24h", "models": ["qwen2.5:7b-instruct", "qwen2.5:14b-instruct"] },
+    { "name": "node3", "host": "", "ssh": "interop", "os": "windows", "role": "image", "image_port": 8188, "models": ["flux.1"] }
   ]
 }

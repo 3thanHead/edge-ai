@@ -16,7 +16,7 @@ LAN talks to **one** endpoint that is load-balanced and auto-fails-over between 
         Jetson Orin Nano        MacBook Air M1            Windows PC
         192.168.1.11           192.168.1.12             192.168.1.13
         Ollama (CUDA)           Ollama (Metal)           Ollama (NVIDIA)
-                         all serving  llama3.2:3b
+                    all serving fleet.json's `model`
 ```
 
 > IPs shown throughout this doc are **examples**. Set your real master + node IPs
@@ -64,7 +64,9 @@ regenerates to match.
 | MacBook Air M1 | 192.168.1.12 | [`nodes/macos/`](nodes/macos/) — `bash setup.sh` |
 | Windows PC | 192.168.1.13 | [`nodes/windows/`](nodes/windows/) — `setup.ps1` (elevated) |
 
-Each installs Ollama, binds it to `0.0.0.0:11434` (LAN-reachable), and pulls `llama3.2:3b`.
+Each installs Ollama, binds it to `0.0.0.0:11434` (LAN-reachable), and pulls the model
+`fleet.json` names. There is no built-in default -- `edge deploy` passes it in, and the
+setup scripts refuse to run without it rather than pulling a model nobody chose.
 Or, from the repo root on each machine, just run **`./edge install-node`** (`.\edge.ps1 install-node`
 on Windows) — it detects the OS and runs the right one. See the [root README](../../README.md#cli).
 
@@ -79,12 +81,12 @@ One endpoint for everything:
 ```bash
 # native Ollama API
 curl http://192.168.1.10:11434/api/generate \
-  -d '{"model":"llama3.2:3b","prompt":"hello","stream":false}'
+  -d '{"model":"qwen3:4b-instruct","prompt":"hello","stream":false}'
 
 # OpenAI-compatible API (what LangChain / apps/ecomm-pipeline use)
 curl http://192.168.1.10:11434/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"llama3.2:3b","messages":[{"role":"user","content":"hello"}]}'
+  -d '{"model":"qwen3:4b-instruct","messages":[{"role":"user","content":"hello"}]}'
 ```
 
 ## Operate
@@ -95,7 +97,7 @@ curl http://192.168.1.10:11434/v1/chat/completions \
   others); the dashboard shows that node DOWN, and it rejoins automatically when back.
 
 ## Models & model-aware routing
-By default every node runs the same model (`llama3.2:3b`) so any node can serve any
+By default every node runs the model `fleet.json` declares, so any node can serve any
 request. But nodes can also serve **different** models, and HAProxy routes each request
 to a node that actually has the requested one.
 

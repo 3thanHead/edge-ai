@@ -7,7 +7,12 @@
 # refreshed via interop — no need to re-run this unless you reinstall Windows.
 
 $ErrorActionPreference = "Stop"
-$Model = if ($env:LLM_MODEL) { $env:LLM_MODEL } else { "llama3.2:3b" }
+# No default: fleet.json's "model" is the source of truth and `edge deploy`
+# always passes it in. Guessing here would pull a model nobody chose.
+if (-not $env:LLM_MODEL) {
+    throw "set LLM_MODEL (edge deploy passes it from fleet.json)"
+}
+$Model = $env:LLM_MODEL
 
 Write-Host "==> Installing Ollama (native Windows, NVIDIA GPU)..."
 if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {

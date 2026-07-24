@@ -70,6 +70,21 @@ async def insert(collection: str, data: dict, dedup_key: str | None = None) -> b
         return cur.rowcount > 0
 
 
+async def replace(collection: str, dedup_key: str, data: dict) -> bool:
+    """Overwrite the document at (collection, dedup_key) with `data`;
+    inserts it if absent. Returns True when a row was written."""
+    async with aiosqlite.connect(DB_PATH) as conn:
+        cur = await conn.execute(
+            "UPDATE documents SET data = ? WHERE collection = ? AND dedup_key = ?",
+            (json.dumps(data), collection, dedup_key))
+        if cur.rowcount == 0:
+            cur = await conn.execute(
+                "INSERT OR IGNORE INTO documents(collection, dedup_key, data) "
+                "VALUES (?, ?, ?)", (collection, dedup_key, json.dumps(data)))
+        await conn.commit()
+        return cur.rowcount > 0
+
+
 async def exists(collection: str, dedup_key: str) -> bool:
     async with aiosqlite.connect(DB_PATH) as conn:
         cur = await conn.execute(

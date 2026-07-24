@@ -1,0 +1,20 @@
+fastapi>=0.115
+uvicorn>=0.30
+pydantic>=2.9
+diffusers>=0.32          # FluxPipeline + 4-bit loading
+transformers>=4.46       # T5-XXL text encoder
+accelerate>=1.1          # enable_model_cpu_offload
+bitsandbytes>=0.45       # NF4 quantization (Linux/WSL wheels; see README)
+sentencepiece>=0.2       # T5 tokenizer
+protobuf>=4.25           # T5 tokenizer conversion
+pillow>=10.4
+
+# torchvision is deliberately absent. transformers warns that CLIPImageProcessor /
+# SiglipImageProcessor fall back to PIL without it -- harmless here, since
+# text-to-image never touches an image processor. Don't add it to quiet the
+# warning; it's another ~2GB for nothing.
+
+# GPU note: torch is NOT listed here on purpose -- the right wheel depends on the
+# card. Blackwell (RTX 50xx, sm_120) needs a CUDA 12.8+ build, which the default
+# PyPI wheel is not. Install it FIRST, into the same venv:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128

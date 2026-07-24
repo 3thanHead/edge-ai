@@ -50,8 +50,12 @@ HAPROXY_CFG = CLUSTER_DIR / "master" / "haproxy.cfg"
 FLEET = CLUSTER_DIR / "fleet.json"
 FLEET_EXAMPLE = CLUSTER_DIR / "fleet.example.json"
 IOTCTL = REPO_ROOT / "tools" / "iotctl" / "iotctl.py"  # ESP32 firmware tool (`edge flash`)
-DEFAULT_MODEL = "llama3.2:3b"
+# No default model on purpose. fleet.json's "model" is the single source of
+# truth; a hardcoded fallback would quietly pull the WRONG model onto every node
+# when the fleet is misconfigured, instead of saying so. Commands that need a
+# model and can't find one exit with an error.
 MASTER_FALLBACK = "localhost:11434"  # used if no fleet.json (run `edge fleet` to set one)
+IMAGE_PORT = 8188  # ComfyUI/SD API default on a node with role "image"
 
 # Apps that talk to the LLM cluster: `edge up`/`deploy` inject the master endpoint
 # (and node list) from fleet.json so no cluster IPs need to live in committed files.
@@ -137,7 +141,8 @@ def list_nodes():
     """(name, host, port) for each LLM node -- from fleet.json, else haproxy.cfg."""
     fleet = load_fleet()
     if fleet:
-        return [(n["name"], n["host"], "11434") for n in fleet.get("nodes", [])]
+        return [(n["name"], n["host"], "11434")
+                for n in llm_nodes(fleet.get("nodes", []))]
     nodes = []
     if HAPROXY_CFG.exists():
         for line in HAPROXY_CFG.read_text().splitlines():
@@ -156,11 +161,11 @@ def master_endpoint():
 
 
 def cluster_model():
-    """The cluster's shared model — fleet.json is the source of truth."""
-    fleet = load_fleet()
-    if fleet and fleet.get("model"):
-        return fleet["model"]
-    return DEFAULT_MODEL
+    """The cluster's shared default model — fleet.json's "model" is the source of
+    truth. "" when there's no fleet or it names none (shown as "unset"). `edge
+    fleet` requires a model at setup, so a fleet built the normal way always has
+    one; callers that already loaded the fleet just read fleet["model"]."""
+    return (load_fleet() or {}).get("model", "")
 
 
 def _san(model):
@@ -180,6 +185,26 @@ def _model_acl_rx(model):
 def node_models(n, default_model):
     """Models a node serves: its explicit `models` list, else the cluster default."""
     return n.get("models") or [default_model]
+
+
+def llm_nodes(nodes):
+    """The text-LLM rotation (the 'document flow'). A node with role "image"
+    hosts image models instead (ComfyUI/SD on its own port) and stays out of
+    HAProxy, CLUSTER_NODES, and Ollama model ops."""
+    return [n for n in nodes if n.get("role", "llm") != "image"]
+
+
+def image_node(nodes):
+    """The image-generation node the fleet declares (role "image") -- but only if it
+    actually names a model. Without one there's nothing to serve, so it's ignored:
+    no IMAGE_MODEL/IMAGE_BASE_URL, and it drops out of health + model listings."""
+    return next((n for n in nodes
+                 if n.get("role") == "image" and n.get("models")), None)
+
+
+def image_endpoint(n):
+    """host:port of an image node's ComfyUI/SD API (image_port, default 8188)."""
+    return f"{n['host']}:{n.get('image_port', IMAGE_PORT)}"
 
 
 def render_haproxy(nodes, default_model):
@@ -319,6 +344,8 @@ def cluster_env():
       LLM_BASE_URL  -> the master/HAProxy endpoint
       CLUSTER_NODES -> comma-separated `name=url` pairs (apps union models per node and
                        let the user pin a request to a node; name = the node's hostname)
+      IMAGE_BASE_URL/IMAGE_MODEL -> the image-role node's ComfyUI/SD endpoint + the
+                       model it serves (its first `models` entry)
     Empty when there's no fleet.json — apps then fall back to their compose default."""
     fleet = load_fleet()
     if not fleet:
@@ -330,11 +357,23 @@ def cluster_env():
     nodes = _cluster_nodes_env(fleet)
     if nodes:
         env["CLUSTER_NODES"] = nodes
-    # The ESP32's address (used by the agents app) lives in the repo-root .env
-    # next to the firmware's WiFi creds -- same no-IPs-in-git policy as fleet.json.
-    device = _root_env().get("IOT_DEVICE_URL")
-    if device:
-        env["IOT_DEVICE_URL"] = device
+    # Image generation lives on the fleet's image-role node (the Windows RTX
+    # box): ComfyUI/SD API on image_port (default 8188), separate from the
+    # text rotation. Its `models` list works like any other node's -- the FIRST
+    # entry is the model apps ask for (IMAGE_MODEL), the rest are just also
+    # installed there. Root .env can still override both below.
+    img = image_node(fleet.get("nodes", []))
+    if img:
+        env["IMAGE_BASE_URL"] = f"http://{image_endpoint(img)}"
+        env["IMAGE_MODEL"] = img["models"][0]
+    # The ESP32's address lives in the repo-root .env next to the firmware's
+    # WiFi creds -- same no-IPs-in-git policy as fleet.json. (The storefront's
+    # commerce keys moved to the storefront-ai repo's own .env.) A root .env
+    # entry still overrides the fleet-derived values above.
+    root = _root_env()
+    for key in ("IOT_DEVICE_URL", "IMAGE_BASE_URL", "IMAGE_MODEL"):
+        if root.get(key):
+            env[key] = root[key]
     return env
 
 
@@ -356,7 +395,7 @@ def _cluster_nodes_env(fleet):
     """`name=url[|keep_alive]` pairs for CLUSTER_NODES, from fleet.json (name = node
     hostname; keep_alive = optional per-node model residency, e.g. "24h" or -1)."""
     pairs = []
-    for n in fleet.get("nodes", []):
+    for n in llm_nodes(fleet.get("nodes", [])):
         pair = f"{n['name']}=http://{n['host']}:11434"
         if n.get("keep_alive") not in (None, ""):
             pair += f"|{n['keep_alive']}"
@@ -369,7 +408,14 @@ def _cluster_nodes_env(fleet):
 def cmd_install_node(args):
     system, label, _ = detect_os()
     say(f"{C['b']}Setting up this machine ({label}) as an Ollama LLM node…{C['x']}")
-    model = args.model or DEFAULT_MODEL
+    # This can run on a node that has no fleet.json (it's rsync-excluded), so
+    # `edge deploy` always passes --model explicitly. Standalone, fall back to a
+    # local fleet.json if there is one -- and refuse rather than invent a model.
+    model = args.model or cluster_model()
+    if not model:
+        say(f"{C['r']}no model specified.{C['x']} Pass --model <name>, or run this "
+            f"from a checkout whose fleet.json names one.")
+        sys.exit(1)
     if system in ("Linux", "Darwin"):
         script = NODES_DIR / ("linux" if system == "Linux" else "macos") / "setup.sh"
         if not script.exists():
@@ -396,6 +442,15 @@ def _ask(label, default=None):
     except EOFError:
         val = ""
     return val or (default or "")
+
+
+def _port(val, default):
+    """A port number from free-text input; the default when it isn't one."""
+    try:
+        p = int(str(val).strip())
+    except (TypeError, ValueError):
+        return default
+    return p if 1 <= p <= 65535 else default
 
 
 def _remote_hostname(ssh_target):
@@ -446,6 +501,11 @@ def cmd_fleet(args):
     if not master_host:
         say(f"{C['r']}master IP is required — nothing written.{C['x']}"); sys.exit(1)
     ssh_user = _ask("SSH login username — the account name, NOT a password (for `edge deploy`)", default_user)
+    # The cluster default: what every node pulls and what HAProxy routes on.
+    # Pre-filled from the current fleet on re-run; typed fresh on first setup.
+    model = _ask("Cluster default model", existing.get("model"))
+    if not model:
+        say(f"{C['r']}a model is required — nothing written.{C['x']}"); sys.exit(1)
 
     say("")
     nodes = []
@@ -459,6 +519,11 @@ def cmd_fleet(args):
         node_os = _ask(f"Node {i} OS (linux/macos/windows)", ex.get("os") or "linux").lower()
         if node_os not in ("linux", "macos", "windows"):
             node_os = "linux"
+        # 'image' takes the node out of the text rotation entirely (no Ollama, no
+        # HAProxy backend) and points apps at its ComfyUI/SD API instead.
+        role = _ask(f"Node {i} role (llm/image)", ex.get("role") or "llm").lower()
+        if role not in ("llm", "image"):
+            role = "llm"
         # Preserve an existing ssh target (re-point its host if the IP changed); otherwise
         # derive one. Windows nodes default to 'interop' (managed via WSL→Windows interop).
         if ex.get("ssh") == "interop":
@@ -477,15 +542,21 @@ def cmd_fleet(args):
         used_names.add(name)
         say(f"    → {name}")
         node = {"name": name, "host": host, "ssh": ssh, "os": node_os}
+        if role == "image":
+            node["role"] = "image"
+            node["image_port"] = _port(
+                _ask(f"Node {i} image API port", ex.get("image_port", IMAGE_PORT)),
+                IMAGE_PORT)
         if ex.get("models"):
             node["models"] = ex["models"]
-        if ex.get("keep_alive") not in (None, ""):
+        # keep_alive is an Ollama setting -- meaningless on an image node.
+        if role != "image" and ex.get("keep_alive") not in (None, ""):
             node["keep_alive"] = ex["keep_alive"]
         nodes.append(node)
         i += 1
 
     fleet = {
-        "model": existing.get("model", DEFAULT_MODEL),
+        "model": model,
         "remote_path": existing.get("remote_path", "~/iot_ai"),
         "master": {"host": master_host, "ssh": f"{ssh_user}@{master_host}"},
         "nodes": nodes,
@@ -495,13 +566,21 @@ def cmd_fleet(args):
     say(f"\n{C['g']}wrote {FLEET.relative_to(REPO_ROOT)}{C['x']}  (model: {fleet['model']})")
     say(f"  {'master':<8} {master_host}")
     for n in nodes:
-        say(f"  {n['name']:<8} {n['host']:<16} {n['os']}")
+        tail = f"image :{n['image_port']}" if n.get("role") == "image" else "llm"
+        say(f"  {n['name']:<8} {n['host']:<16} {n['os']:<8} {tail}")
     if not nodes:
         say(f"  {C['y']}(no nodes yet — re-run `edge fleet` to add some){C['x']}")
     say(f"\nNext: {C['b']}edge deploy{C['x']} to set up the nodes + regenerate the load balancer.")
 
 
 def _deploy_node(n, model, rpath):
+    # Image nodes run ComfyUI/SD, not Ollama -- nothing here applies to them.
+    # Guarded here (not at the call site) so `edge deploy <that node>` by name
+    # skips it too, not just `edge deploy nodes`.
+    if n.get("role") == "image":
+        say(f"\n{C['y']}== skipping {n['name']}: image node (no Ollama; ComfyUI/SD "
+            f"on {image_endpoint(n)}) =={C['x']}")
+        return
     say(f"\n{C['b']}== node: {n['name']} ({n['host']}, {n['os']}) =={C['x']}")
     # Windows has no SSH/rsync by default. When deploying from WSL *on* the Windows
     # host, manage its native Ollama through WSL->Windows interop instead of skipping.
@@ -593,7 +672,8 @@ def _deploy_master(fleet, rpath):
     say("-> syncing repo…")
     rsync_repo(m["ssh"], rpath)
     say("-> rendering model-aware haproxy.cfg from fleet and shipping it…")
-    cfg = render_haproxy(fleet.get("nodes", []), fleet.get("model", DEFAULT_MODEL))
+    cfg = render_haproxy(llm_nodes(fleet.get("nodes", [])),
+                         fleet.get("model", ""))
     if DRY_RUN:
         say(cfg)
     scp_text(m["ssh"], cfg, f"{rpath}/infra/llm-cluster/master/haproxy.cfg")
@@ -626,20 +706,14 @@ def _deploy_app(app, fleet, rpath):
     say("-> syncing repo…")
     rsync_repo(m["ssh"], rpath)
     say(f"-> building + (re)starting {app} on the master…")
-    # Pass the cluster endpoints from fleet.json (the single source of truth): the
-    # master URL (LLM_BASE_URL) plus the per-node list (CLUSTER_NODES) so apps that
-    # aggregate per-node — e.g. chat's model dropdown — can union across the cluster.
-    # fleet.json is rsync-excluded, so the master has none; passing them on the command
-    # line lets the remote `edge up` resolve them for compose. Apps ignore what they
-    # don't read.
-    nodes_env = _cluster_nodes_env(fleet)
-    master = fleet.get("master", {}).get("host", "")
-    base_env = f"http://{master}:11434" if master else ""
-    # The device address rides along the same way (root .env is rsync-excluded,
-    # so the master can't resolve it itself). Apps ignore what they don't read.
-    device_env = _root_env().get("IOT_DEVICE_URL", "")
-    ssh_run(m["ssh"], f"cd {rpath} && LLM_BASE_URL='{base_env}' CLUSTER_NODES='{nodes_env}' "
-                      f"IOT_DEVICE_URL='{device_env}' "
+    # Pass every fleet/root-.env-derived endpoint (cluster_env() is the single
+    # source of truth: LLM_BASE_URL, CLUSTER_NODES, IOT_DEVICE_URL,
+    # IMAGE_BASE_URL, shop keys, ...). fleet.json and root .env are
+    # rsync-excluded, so the master can't resolve any of it itself; the
+    # command line carries it to the remote `edge up` for compose. Apps
+    # ignore what they don't read.
+    env_str = " ".join(f"{k}='{v}'" for k, v in cluster_env().items())
+    ssh_run(m["ssh"], f"cd {rpath} && {env_str} "
                       f"./edge up {app} --build")
 
 
@@ -647,7 +721,7 @@ def cmd_deploy(args):
     global DRY_RUN
     DRY_RUN = args.dry_run
     fleet = load_fleet(required=True)
-    model = fleet.get("model", DEFAULT_MODEL)
+    model = fleet.get("model", "")
     rpath = fleet.get("remote_path", "~/iot_ai")
     target = args.target
     if DRY_RUN:
@@ -746,7 +820,7 @@ def cmd_list(args):
 
 
 def cmd_cluster(args):
-    say(f"{C['b']}LLM cluster health{C['x']}  (model {cluster_model()})")
+    say(f"{C['b']}LLM cluster health{C['x']}  (model {cluster_model() or 'unset'})")
     nodes = list_nodes()
     if not nodes:
         say(f"{C['y']}no nodes configured (fleet.json / haproxy.cfg){C['x']}"); return
@@ -759,6 +833,15 @@ def cmd_cluster(args):
             say(f"  {C['g']}● UP  {C['x']}{name:<10} {host}:{port}   models: {models}")
         else:
             say(f"  {C['r']}● DOWN{C['x']} {name:<10} {host}:{port}")
+    # The image node isn't in the Ollama rotation (so not in list_nodes()), but it's
+    # still fleet-managed -- show it separately, probed on its own API.
+    img = image_node((load_fleet() or {}).get("nodes", []))
+    if img:
+        ep = image_endpoint(img)
+        alive = http_json(f"http://{ep}/system_stats") is not None
+        models = ", ".join(img.get("models") or []) or "(none declared)"
+        mark = f"{C['g']}● UP  {C['x']}" if alive else f"{C['r']}● DOWN{C['x']} "
+        say(f"  {mark}{img['name']:<10} {ep:<21} image: {models}")
     master = master_endpoint()
     lb = http_json(f"http://{master}/api/tags")
     state = f"{C['g']}reachable{C['x']}" if lb is not None else f"{C['r']}unreachable{C['x']}"
@@ -769,7 +852,8 @@ def cmd_cluster(args):
 def cmd_model(args):
     if args.action in ("ls", "list"):
         # Query what each node actually has (its /api/tags) -> model -> [nodes] map.
-        say(f"{C['b']}Models available on the cluster{C['x']}  (default: {cluster_model()})")
+        say(f"{C['b']}Models available on the cluster{C['x']}  "
+            f"(default: {cluster_model() or 'unset'})")
         catalog = {}
         for name, host, port in list_nodes():
             data = http_json(f"http://{host}:{port}/api/tags")
@@ -778,9 +862,14 @@ def cmd_model(args):
             for m in data.get("models", []):
                 catalog.setdefault(m.get("name", "?"), set()).add(name)
         if not catalog:
-            say("  (no models / no nodes reachable)"); return
+            say("  (no models / no nodes reachable)")
         for model in sorted(catalog):
             say(f"  {model:<24} {', '.join(sorted(catalog[model]))}")
+        # Image models can't be discovered (ComfyUI/SD has no /api/tags) -- fleet.json
+        # is their record, and the node's first entry is what apps get as IMAGE_MODEL.
+        img = image_node((load_fleet() or {}).get("nodes", []))
+        for i, m in enumerate((img or {}).get("models") or []):
+            say(f"  {m:<24} {img['name']}  ({'image default' if i == 0 else 'image'})")
         return
 
     if args.action in ("rm", "remove"):
@@ -796,12 +885,17 @@ def cmd_model(args):
                     f"({', '.join(n['name'] for n in nodes)})"); sys.exit(1)
             say(f"{C['b']}Removing {model} from node '{args.node}'{C['x']}")
         else:
-            targets = nodes
-            say(f"{C['b']}Removing {model} from every node{C['x']}")
+            targets = llm_nodes(nodes)
+            say(f"{C['b']}Removing {model} from every LLM node{C['x']}")
 
         ok = 0
         for n in targets:
-            if _delete_on_node(n, model):
+            if n.get("role") == "image":
+                # No Ollama to delete from: the fleet.json entry IS the record.
+                say(f"-> {n['name']}: image node — dropping {model} from fleet.json "
+                    f"(delete the weights on the box yourself)")
+                ok += 1
+            elif _delete_on_node(n, model):
                 ok += 1
             ml = n.get("models")  # drop it from the node's explicit list, if present
             if ml and model in ml:
@@ -821,7 +915,13 @@ def cmd_model(args):
     if args.action == "pull":
         if not have("ollama"):
             say(f"{C['r']}ollama not found{C['x']} — run `edge install-node` first."); sys.exit(1)
-        sys.exit(run(["ollama", "pull", args.name or cluster_model()], check=False))
+        # `edge model pull` with no name pulls whatever the fleet declares.
+        name = args.name or cluster_model()
+        if not name:
+            say(f"{C['r']}nothing to pull{C['x']} — name a model or set the fleet "
+                f"default with `edge model set <name>` / `edge fleet`.")
+            sys.exit(1)
+        sys.exit(run(["ollama", "pull", name], check=False))
     if args.action == "set":
         if not args.name:
             say(f"{C['r']}usage: edge model set <name> [--node <name>]{C['x']}")
@@ -829,7 +929,7 @@ def cmd_model(args):
         model = args.name
         fleet = load_fleet(required=True)
         nodes = fleet.get("nodes", [])
-        default_model = fleet.get("model", DEFAULT_MODEL)
+        default_model = fleet.get("model", "")
 
         if args.node:
             targets = [n for n in nodes if n["name"] == args.node]
@@ -838,11 +938,24 @@ def cmd_model(args):
                     f"({', '.join(n['name'] for n in nodes)})"); sys.exit(1)
             say(f"{C['b']}Adding {model} to node '{args.node}'{C['x']}")
         else:
-            targets = nodes
-            say(f"{C['b']}Switching cluster default -> {model} (every node){C['x']}")
+            targets = llm_nodes(nodes)
+            say(f"{C['b']}Switching cluster default -> {model} (every LLM node){C['x']}")
 
         ok = 0
         for n in targets:
+            if n.get("role") == "image":
+                # Image nodes run ComfyUI/SD, not Ollama -- there's nothing to pull
+                # over :11434. Recording it in fleet.json is the whole job: the
+                # node's FIRST model is what apps get as IMAGE_MODEL, so `set`
+                # promotes it to the front. Fetch the weights on the box itself.
+                ml = n.setdefault("models", [])
+                if model in ml:
+                    ml.remove(model)
+                ml.insert(0, model)
+                say(f"-> {n['name']}: image node — {model} is now its IMAGE_MODEL "
+                    f"(no pull; install the weights in ComfyUI on that box)")
+                ok += 1
+                continue
             if _pull_on_node(n, model):
                 ok += 1
                 ml = n.setdefault("models", list(node_models(n, default_model)))
@@ -906,7 +1019,7 @@ def build_parser():
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("install-node", help="set up this machine as an Ollama LLM node")
-    s.add_argument("--model", help=f"model to pull (default {DEFAULT_MODEL})")
+    s.add_argument("--model", help="model to pull (default: fleet.json's model)")
     s.set_defaults(func=cmd_install_node)
 
     s = sub.add_parser("deploy", help="push the cluster + master apps over SSH (uses fleet.json)")

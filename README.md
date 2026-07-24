@@ -53,7 +53,8 @@ http://192.168.1.10:8404       # live health dashboard
 > IPs above are **examples**. Set your real master + node IPs with **`./edge fleet`**
 > (stored in `infra/llm-cluster/fleet.json`, which is gitignored — never committed).
 
-All nodes serve the same model (`llama3.2:3b`) so any node can answer any request.
+All nodes serve the model named in `fleet.json` (currently `qwen3:4b-instruct`), so
+any node can answer any request.
 See [infra/llm-cluster/README.md](infra/llm-cluster/) for setup and the failover test.
 
 ## CLI

@@ -13,7 +13,7 @@ picker to a running model so the first message skips the cold load. Falls
 back to the load-balanced endpoint alone when no per-node info is configured.
 
 ```json
-{"models": ["llama3.2:3b", "moondream:latest"], "running": ["llama3.2:3b"]}
+{"models": ["qwen3:4b-instruct", "moondream:latest"], "running": ["qwen3:4b-instruct"]}
 ```
 
 ### `GET /api/nodes`
@@ -42,7 +42,7 @@ cancel aborts the previous one).
 Client → server:
 
 ```json
-{"model": "llama3.2:3b", "messages": [{"role": "user", "content": "hi"}]}
+{"model": "qwen3:4b-instruct", "messages": [{"role": "user", "content": "hi"}]}
 {"model": "...", "messages": [...], "node": "jetson"}      // pin to one node
 {"agent": "led", "messages": [...]}                         // route to an agent
 {"type": "cancel"}                                          // stop generating

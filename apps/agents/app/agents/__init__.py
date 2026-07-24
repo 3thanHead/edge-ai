@@ -16,7 +16,8 @@ def load() -> dict[str, BaseAgent]:
     if _registry:
         return _registry
     for mod_info in pkgutil.iter_modules(__path__):
-        if mod_info.name in ("base", "events"):
+        # base/events are plumbing; prompts/ is a support package.
+        if mod_info.name in ("base", "events", "prompts"):
             continue
         mod = importlib.import_module(f"{__name__}.{mod_info.name}")
         agent = getattr(mod, "AGENT", None)

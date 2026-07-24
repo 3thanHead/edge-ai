@@ -9,7 +9,7 @@ bash setup.sh
 What it does:
 1. Installs Ollama (Homebrew cask, or prompts for the .app download).
 2. Sets `OLLAMA_HOST=0.0.0.0:11434` (LAN-reachable) via `launchctl setenv` and starts the server.
-3. Pulls `llama3.2:3b`.
+3. Pulls the model `fleet.json` names (passed in as `LLM_MODEL`; no default).
 4. Self-checks `/api/tags`.
 
 Verify from another machine:
@@ -21,4 +21,5 @@ curl http://192.168.1.12:11434/api/tags
 > is in its environment so it stays reachable after a reboot (the `launchctl setenv`
 > above sets a login-wide default).
 
-> An 8GB M1 runs `llama3.2:3b` comfortably; leave headroom for whatever else the Mac runs.
+> An 8GB M1 runs a 3-4B model (e.g. `qwen3:4b-instruct`) comfortably; leave headroom
+> for whatever else the Mac runs.

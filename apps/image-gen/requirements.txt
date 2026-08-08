@@ -1,10 +1,13 @@
 fastapi>=0.115
 uvicorn>=0.30
 pydantic>=2.9
-diffusers>=0.32          # FluxPipeline + 4-bit loading
+# Flux2KleinPipeline (the default model) is new -- if `import Flux2KleinPipeline`
+# fails on the pinned release, install diffusers from git instead:
+#   pip install git+https://github.com/huggingface/diffusers.git
+diffusers>=0.35          # Flux2KleinPipeline + FluxPipeline (fallback) + 4-bit loading
 transformers>=4.46       # T5-XXL text encoder
 accelerate>=1.1          # enable_model_cpu_offload
-bitsandbytes>=0.45       # NF4 quantization (Linux/WSL wheels; see README)
+bitsandbytes>=0.45       # NF4 quantization -- only exercised by the FLUX.1 fallback path
 sentencepiece>=0.2       # T5 tokenizer
 protobuf>=4.25           # T5 tokenizer conversion
 pillow>=10.4
